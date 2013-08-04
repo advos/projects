@@ -5,7 +5,7 @@
  *
  * This file is released under the GPLv2.
  * See the file COPYING for more details.
- */
+ */ 
 
 #ifndef _ASM_X86_SYSCALLS_H
 #define _ASM_X86_SYSCALLS_H
