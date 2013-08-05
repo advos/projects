@@ -85,7 +85,6 @@ static int find_file(struct sandbox_class * sandbox, const char * filename)
   __kernel_size_t len = strnlen(filename, PATH_MAX);
   
   if (NULL == sandbox->file_list) {
-    printk(KERN_DEBUG "sandbox->file_list is empty\n");
     return (int)false;
   }
   
@@ -118,7 +117,6 @@ static int sandbox_enter(unsigned long sandbox_id)
   struct sandbox_class * sandbox = &sandbox_list[sandbox_id];
   
   if (sandbox->strip_files) {
-    printk(KERN_DEBUG "doing _strip_files()\n");
     _strip_files();
   }
 
@@ -132,15 +130,17 @@ static int sandbox_enter(unsigned long sandbox_id)
      that is because after changing the sandbox id many
      os operations are blocked by the sandbox hooks. 
   */
-  task_lock(current);
   current->sandbox_id = sandbox_id;
-  task_unlock(current);
 
   return 0;
 }
 
 static int sandbox_syscall(int syscall_num)
 {
+  if (0 == current->sandbox_id) {
+    return SYSCALL_OK;
+  }
+  printk("called sandbox_syscall(%d) in sandbox(%ld)\n", syscall_num, current->sandbox_id);
   if (unlikely(test_bit(syscall_num, current_sandbox.syscalls))) {
     printk("bit %d is set in current sandbox (%ld)\n", syscall_num, current->sandbox_id);
     return BLOCK_SYSCALL;
@@ -153,20 +153,15 @@ static int sandbox_open(const char * __user filename)
   struct sandbox_class * sandbox = &sandbox_list[current->sandbox_id];
   bool file_found = false;
   int retval = 0;
-  
-  printk(KERN_DEBUG "called sandbox_open(%s) in sandbox (%ld)\n", filename, current->sandbox_id);
 
   file_found = (bool) find_file(sandbox, filename);
   if (sandbox->disallow_files_by_default) {
     /* if we disallow files by default, than if the file is NOT found, it is disallowed */
-    printk(KERN_DEBUG "mode: disallow all but exceptions\n");
     retval = (int) (file_found);
   } else {
     /* files are allowed by default, hence if the file is NOT in the list, we allow it. */
-    printk(KERN_DEBUG "mode: allow all but exceptions\n");
     retval = (int) (!file_found);
   }
-  printk(KERN_DEBUG "return value: %d\n", retval);
 
   return retval;
 }
@@ -222,8 +217,6 @@ void _clear_pointer(void * ptr)
 /* init_sandbox() should load the data structure
    with the default and most permissive configuration */
 static void init_sandbox(struct sandbox_class * sandbox) {
-  printk(KERN_ALERT "init_sandbox has been called\n");
-
   _clear_pointer(sandbox->fs_root);
   _clear_pointer(sandbox->file_list);
   _clear_pointer(sandbox->ip_list);
@@ -249,8 +242,6 @@ static void init_limited_sandbox(struct sandbox_class * sandbox)
   struct file_exception * file_a = kmalloc(sizeof(struct file_exception), GFP_KERNEL);
   struct file_exception * file_b = kmalloc(sizeof(struct file_exception), GFP_KERNEL);
   struct file_exception * file_c = kmalloc(sizeof(struct file_exception), GFP_KERNEL);
-
-  printk(KERN_ALERT "init_limited_sandbox(1) has been called\n");
   
   sandbox_set_jail(sandbox, jail);
   sandbox_set_strip_files(sandbox, true);
@@ -276,11 +267,9 @@ void init_sandbox_list(void) {
   int i = 0;
 
   for(i=0; i < NUM_SANDBOXES; i++) {
-    printk(KERN_ALERT "init_sandbox(%d)\n", i);
     init_sandbox(get_sandbox(i));
   }
   /* temp */
-  printk(KERN_ALERT "init_limited_sandbox(1)\n");
   init_limited_sandbox(get_sandbox(1));
 }
 

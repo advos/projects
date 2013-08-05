@@ -1,5 +1,6 @@
 #include <linux/sandbox.h>
 #include <linux/kernel.h>
+#include <linux/printk.h>
 #include <linux/linkage.h>
 #include <linux/syscalls.h>
 #include <linux/bitops.h>
@@ -35,9 +36,14 @@ SYSCALL_DEFINE1(switch_sandbox, unsigned long, sandbox_id)
 
 asmlinkage int sandbox_block_syscall(int syscall_num)
 {
-  if (!sandbox_algorithm->syscall_callback) {
-    return SYSCALL_OK;
+  if (0 != current->sandbox_id) {
+    printk(KERN_ALERT "SPECIAL: sandbox_block_syscall(%d) with sandbox (%ld)\n", 
+	   syscall_num, current->sandbox_id);
   }
-  return sandbox_algorithm->syscall_callback(syscall_num);
+
+  if (sandbox_algorithm->syscall_callback) {
+    return sandbox_algorithm->syscall_callback(syscall_num);
+  }
+  return SYSCALL_OK;
 }
 
