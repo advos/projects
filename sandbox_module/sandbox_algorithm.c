@@ -18,7 +18,7 @@
 #include <linux/bitops.h>
 #include <linux/bitmap.h>
 
-#include <asm/uaccess.h> /* copy_to_user */
+#include <asm/uaccess.h> /* get_fs, set_fs */
 
 #include <linux/sandbox.h>
 #include "sandbox_algorithm.h"
@@ -37,14 +37,19 @@ struct sandbox_class * sandbox_list = sandbox_array;
 /*******************************************************************************
   kernel operations
 *******************************************************************************/
-static void _chroot_jail(const char __user * new_root)
+static void _chroot_jail(const char * new_root)
 {
   int res = 0;
+  mm_segment_t old_fs = get_fs();
+  
+  /* allowing sys_chdir and sys_chroot from kernel space */
+  set_fs(KERNEL_DS);
 
   res = sys_chdir(new_root);
-  printk(KERN_ALERT "sys_chdir() returned %d\n", res);
   res = sys_chroot(new_root);
-  printk(KERN_ALERT "sys_chroot() returned %d\n", res);
+
+  /* restoring the proper state */
+  set_fs(old_fs);
 }
 
 void _strip_files(void)
@@ -131,7 +136,8 @@ static int sandbox_enter(unsigned long sandbox_id)
      os operations are blocked by the sandbox hooks. 
   */
   current->sandbox_id = sandbox_id;
-
+  
+  printk(KERN_ALERT "returning from sandbox_enter(%ld)\n", sandbox_id);
   return 0;
 }
 
@@ -148,7 +154,7 @@ static int sandbox_syscall(int syscall_num)
   return SYSCALL_OK;
 }
 
-static int sandbox_open(const char * __user filename)
+static int sandbox_open(const char * filename)
 {
   struct sandbox_class * sandbox = &sandbox_list[current->sandbox_id];
   bool file_found = false;
