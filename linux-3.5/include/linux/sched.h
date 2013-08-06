@@ -94,6 +94,8 @@ struct sched_param {
 
 #include <asm/processor.h>
 
+#include <linux/CFLock.h>
+
 struct exec_domain;
 struct futex_pi_state;
 struct robust_list_head;
@@ -1583,6 +1585,7 @@ struct task_struct {
 	struct uprobe_task *utask;
 	int uprobe_srcu_id;
 #endif
+	mcs_node_t mcs_node;
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
