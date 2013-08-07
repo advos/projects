@@ -5,6 +5,7 @@
 #include <linux/cdev.h>
 #include <linux/phase_shifts.h>
 #include <linux/cred.h>
+#include <linux/device.h>
 
 #include <asm/page_types.h>
 #include <asm/pgtable.h>
@@ -16,9 +17,16 @@
 MODULE_LICENSE("Dual BSD/GPL");
 
 #define WATCHED_USER ((uid_t)2013)
-#define HASH_SIZE 16
+#define HASH_SIZE 32
 
-static unsigned long LOCALITY_SIZE = 32;
+static unsigned long locality_size = 32;
+
+
+static dev_t phase_dev = 0;
+static struct cdev *phase_char_dev = NULL;
+static struct class* phase_class = NULL;
+
+
 
 /** get_page_number that extracts the page number out of an address.
  * @address - address from which we would like to extract page number.
@@ -27,7 +35,7 @@ static inline unsigned long get_page_number(unsigned long address)
 {
 	return address >> PAGE_SHIFT;
 }
-/**  pn_to_address returns the address in the page pn with offset 0x0 (That is, 0xPN000 for 32bit).
+/**  pn_to_address returns the address in the page pn with offset 0x0 (That is, 0xpn000 for 32bit).
  *
  */ 
 static inline unsigned long pn_to_addr(unsigned long pn)
@@ -114,7 +122,7 @@ static void phase_shifts_data_init (struct phase_shift_detection_scheme* scheme)
 	scheme->locality_hash_tbl = alloc_hash(HASH_SIZE);
 	INIT_LIST_HEAD(&scheme->locality_list);
 	scheme->locality_list_size = 0;
-	scheme->locality_max_size = LOCALITY_SIZE;
+	scheme->locality_max_size = locality_size;
 	scheme->hash_table_size = HASH_SIZE;
 	atomic_set(&scheme->current_tick_faults, 0);
 	scheme->previous_tick_faults = 0;
@@ -161,7 +169,7 @@ static void exec_callback(struct task_struct* p)
 			free_phase_shifts_data(p->phase_shifts_private_data);
 		}
 		p->phase_shifts_private_data = (void*) data;
-		printk( KERN_ALERT "%s[%d]: execution has begun. Locality size is %lu\n", get_task_comm(buff, p), task_pid_nr(p), data->locality_max_size);
+		printk( KERN_ALERT "%s[%d]: execution has begun. Locality size is %lu.\n", get_task_comm(buff, p), task_pid_nr(p), data->locality_max_size);
 	}
 }
 /** add_this_page() is called whenever the page fault handler callback detects that a page should be added to the locality list.
@@ -288,6 +296,7 @@ static void timer_callback (struct task_struct* p, int user_tick)
 		printk(KERN_ALERT "[%d] tick: %lu,%d\n", task_pid_nr(p), scheme->number_of_ticks, scheme->previous_tick_faults);
 		if(detected)
 		{
+			//printk(KERN_ALERT "phase shift has been detected.\n");
 			printk( KERN_ALERT "[%d] shift: %lu,%d\n", task_pid_nr(p), scheme->number_of_ticks, 1 );
 		}
 		else
@@ -300,16 +309,80 @@ static void timer_callback (struct task_struct* p, int user_tick)
 /**
  * phase_shifts_init() is the module init function. Initializes callbacks.
  */ 
-static int phase_shifts_init(void)
+
+long phase_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-	// Init callbacks.
+	locality_size = *((unsigned long*)arg);
+	printk(KERN_ALERT "Phase shifts Algorithm: current locality size: %lu.\n", locality_size);
+	return arg;
+	
+}
+                            
+static const struct file_operations phase_char_fops = {
+	.unlocked_ioctl = phase_ioctl
+};
+
+static int phase_shifts_init(void)
+{	
+	// Creating a char device for setting locality size.
+	
+	int res;
+	res = alloc_chrdev_region(&phase_dev, 0, 1, "phase_shifts_char_device");
+	if (res < 0)
+		goto register_failed;
+
+	phase_class = class_create(THIS_MODULE, "PhaseShifts");
+	if(NULL == phase_class)
+	{
+		res = -ENOMEM;
+		goto class_fail;
+	}
+
+	phase_char_dev = cdev_alloc();
+	if (NULL == phase_char_dev)
+	{
+		res = -ENOMEM;
+		goto cdev_fail;
+	}
+	cdev_init(phase_char_dev, &phase_char_fops);
+	res = cdev_add(phase_char_dev, phase_dev, 1);
+	if (res < 0)
+		goto cdev_fail;
+
+
+	if(!device_create(phase_class, NULL, phase_dev, NULL, "phase_shifts_char_device"))
+	{
+		res = -ENODEV;
+		goto device_fail;
+	}
+	// Activate callbacks.
 	phase_shifts_algorithm->exit_callback = exit_callback;
 	phase_shifts_algorithm->exec_callback = exec_callback;
 	phase_shifts_algorithm->fault_callback = fault_callback;
 	phase_shifts_algorithm->timer_callback = timer_callback;
-	
+
 	printk(KERN_ALERT "Phase shifts detection algorithm activated. \n");
 	return 0;
+
+	device_fail:
+	
+	device_destroy(phase_class, phase_dev);
+	printk(KERN_ALERT "device creation failed... unregistering\n");
+
+	cdev_fail:
+	
+	printk(KERN_ALERT "cdev registration failed... unregistering\n");
+	cdev_del(phase_char_dev);
+	
+	class_fail:
+	class_destroy(phase_class);
+	printk(KERN_ALERT "class registration failed... unregistered\n");
+	
+	register_failed:
+	unregister_chrdev_region(phase_dev, 1);
+	
+	return res;
+	
 }
 /**
  * phase_shifts_exit() is the module exit function. Removes callbacks.
@@ -322,6 +395,10 @@ static void phase_shifts_exit(void)
 	phase_shifts_algorithm->fault_callback = NULL;
 	phase_shifts_algorithm->timer_callback = NULL;
 	
+	device_destroy(phase_class, phase_dev);
+	class_destroy(phase_class);
+	cdev_del(phase_char_dev);
+	unregister_chrdev_region(phase_dev, 1);
 	
 	printk(KERN_ALERT "Phase shifts detection algorithm deactivated. \n");
 }
