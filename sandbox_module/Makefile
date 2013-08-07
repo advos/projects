@@ -4,6 +4,7 @@ FILE_TO_COMPILE = sandbox_algorithm
 ifneq ($(KERNELRELEASE),)
 
 	obj-m := $(FILE_TO_COMPILE).o
+	obj-m += sandbox_char.o
 
 # Otherwise we were called directly from the command
 # line; invoke the kernel build system.
