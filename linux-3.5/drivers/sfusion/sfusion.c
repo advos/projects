@@ -200,6 +200,7 @@ bool should_loadbalance(struct sk_buff *skb)
 {
 	struct device_list* dev_iter = &mydevs;
 	bool dev_exists = false;
+	bool found = false;
 	struct rule_list* rule_iter = &myrules;
 	struct iphdr *ip_hdr = NULL;
 	struct tcphdr* tcp_header = NULL;
@@ -209,6 +210,7 @@ bool should_loadbalance(struct sk_buff *skb)
 	char *subnet_pointer = NULL;
 	int subnet_part = 0;
 	unsigned int subnet = 0;
+	int i = 0;
 	int cidr = 0;
 	char* str_subnet_part = NULL;
 	unsigned int ip = 0;
@@ -270,11 +272,38 @@ bool should_loadbalance(struct sk_buff *skb)
 				// No protocol was set.
 				else
 					continue;
-				// TODO: Check ports and types.
+				// Rule is for source port.
 				if(strncmp(rule_iter->port_type,"src",3)==0)
-					{}
+				{
+					found = false;
+					// Go over the ports.
+					for(i = 1; i <= (rule_iter->ports)[0]; i++)
+					{
+						// Port matches the packets'.
+						if(strncmp((rule_iter->ports)[i], packet_srcport, IFNAMSIZ) == 0)
+							found = true;
+					}
+					// No port was found.
+					if(!found)
+						continue;
+				}
+				// Rule is for destination port.
+				else if(strncmp(rule_iter->port_type,"dest",4)==0)
+				{
+					found = false;
+					// Go over the ports.
+					for(i = 1; i <= (rule_iter->ports)[0]; i++)
+					{
+						// Port matches the packets'.
+						if(strncmp((rule_iter->ports)[i], packet_destport, IFNAMSIZ) == 0)
+							found = true;
+					}
+					// No port was found.
+					if(!found)
+						continue;
+				}
 				else
-					{}
+					continue;
 			}
 		}
 		// Subnet exists.
@@ -635,9 +664,10 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 				val = kmalloc(word_length * sizeof(char), GFP_KERNEL);
 				for(count = 0; count < 4; count++)
 				{
-					// Get the values.
+					// Get the octets.
 					if(count != 3)
 						val_length = get_next_word(word + word_offset, val, &word_length, &word_offset, SUBNET_SEPARATOR);
+					// Get the cidr.
 					else
 						val_length = get_next_word(word + word_offset, val, &word_length, &word_offset, CIDR_SEPARATOR);
 					// Try converting string to int.
