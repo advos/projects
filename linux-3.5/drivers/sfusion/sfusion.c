@@ -1,25 +1,23 @@
 #include "sfusion.h"
 
-//struct iphdr *ip_hdr;
-
 module_init(device_init);
 module_exit(device_exit);
 
 /*
- * A struct that holds a device name
- * and a link to the list header.
- * amount of sends through this second
- * amount of sends last seconde
+ * A struct that holds:
+ * - The device name.
+ * - Alink to the list header
+ * - The amount of packets that were sent in this second.
+ * - The amount of packets that were sent in the last second.
  */
 struct device_list {
 	struct net_device *dev;
 	struct list_head list;
-
 	int amount_sent;
 	int last_sec_amount_sent;
 };
 /*
- * A struct that holds a rule
+ * A struct that holds the rule and
  * a link to the list header.
  *
  * A rule consists of:
@@ -39,7 +37,7 @@ struct rule_list {
 	struct list_head list;
 };
 /*
- * Struct that maps the char device's file operations
+ * A struct that maps the char device's file operations
  * to their implementation in the code.
  */
 static struct file_operations fops = {
@@ -49,10 +47,17 @@ static struct file_operations fops = {
 	.release = device_release
 };
 /*
- * struct that holds the timer
-*/
+ * Set hook to be POST_ROUTING.
+ */
+static struct nf_hook_ops nfho_post =
+{
+	.hook = loadbalance_hook,
+	.hooknum = NF_INET_POST_ROUTING,
+	.pf = NFPROTO_IPV4,
+	.priority = NF_IP_PRI_FIRST,
+};
+/* A struct that holds the timer. */
 static struct timer_list bandwidth_timer;
-
 /* Will be initialized with device's major */
 static int device_major = -1;
 /* Holds the amount of devices that were opened */
@@ -61,8 +66,9 @@ static int device_opened = 0;
 static device_list mydevs;
 /* Holds a list of rules that were set by the user */
 static rule_list myrules;
-/* Counter for the rules */
+/* Counter for the number of rules */
 static int num_rules = 0;
+/* Counter for setting the end of file */
 static int for_eof = 0;
 
  
@@ -81,43 +87,46 @@ int device_init(void) {
 		return device_major;
 	}
 	printk(KERN_INFO "sfusion: sfusion loaded with major %d.\n", device_major);
-
-	//initialise timer
-	setup_timer(&bandwidth_timer, set_bandwith, 0);
+	// Initialise a timer for the bandwidth calculations.
+	setup_timer(&bandwidth_timer, set_bandwidth, 0);
 	mod_timer(&bandwidth_timer, sec_as_jiffies+jiffies);
-
-	//intialise netfilter hooks
-	op_result=init_netfilter_loadbalancer_hook();
-	if(op_result!=0)
+	// Initialize the netfilter hooks.
+	op_result = init_netfilter_loadbalancer_hook();
+	// Initialization failed.
+	if(op_result != 0)
 		return op_result;
-
 	return 0;
 }
 /**
- * this is the timers callback method
- * //switch devices past second packets counter and reset current
+ * set_bandwidth		-	This is the timer's callback method.
+ *					Set last second's bandwidth to be    
+ *					this one's and reset this one's 
+ *					bandwidth for all the devices.
+ * @data: Not being used.
 **/
-void set_bandwith(unsigned long data){
-	struct device_list *device_iter=&mydevs;
-	while(device_iter!=NULL){
-		device_iter->last_sec_amount_sent=device_iter->amount_sent;
-		device_iter->amount_sent=0;
-		device_iter=(struct device_list *)device_iter->list.next;
+void set_bandwidth(unsigned long data){
+	struct device_list *device_iter = &mydevs;
+	// Go over the devices.
+	while(device_iter != NULL){
+		// Update device's bandwidth for the last second to be the
+		// collected bandwidth for this second.
+		device_iter->last_sec_amount_sent = device_iter->amount_sent;
+		// Reset this second's bandwidth.
+		device_iter->amount_sent = 0;
+		// Go to the next node in the list.
+		device_iter = (struct device_list *)device_iter->list.next;
 	}
 }
-
 /**
- * the post routing hook set to netfilter
-**/
-static struct nf_hook_ops nfho_post =
-{
-	.hook = loadbalance_hook,
-	.hooknum = NF_INET_POST_ROUTING,
-	.pf = NFPROTO_IPV4,
-	.priority = NF_IP_PRI_FIRST,
-};
-/**
- * check if loadbalncing nedded and load balance when needed
+ * loadbalance_hook		-	Apply load-balance on the packet if 
+ * 					needed.
+ * @hooknum: Hook's id.
+ * @skb: Pointer to the socket buffer.
+ * @in: Device that received the packet.
+ * @out: Device that will the receive the packet.
+ * @okfn: Function to be used if NF_ACCEPT is called.
+ * @Returns: NF_ACCEPT / NF_DROP - depending whether the packet matched the
+ * filter or not.
 **/
 unsigned int loadbalance_hook
 	(unsigned int hooknum,
@@ -126,226 +135,252 @@ unsigned int loadbalance_hook
 	const struct net_device *out,
 	int (*okfn)(struct sk_buff *))
 {
-	struct sk_buff *new_skb=NULL;
-	struct net_device *new_device=NULL;
-
+	struct sk_buff *new_skb = NULL;
+	struct net_device *new_device = NULL;
+	
+	// Check if the filter doesn't apply to this packet.
 	if(!should_loadbalance(skb))
 	{
+		// Update device's bandwidth for this packet.
 		update_device_counters(skb);
+		// Pass it as-is.
 		return NF_ACCEPT;
 	}
-
-	//start load balancing
-	printk(KERN_DEBUG "loadbalancing needed");
-	new_skb=skb_copy(skb,GFP_ATOMIC);
-	if(new_skb==NULL)
+	
+	printk(KERN_DEBUG "sfusion: load-balancing is needed.\n");
+	// Copy the packet.
+	new_skb = skb_copy(skb,GFP_ATOMIC);
+	// Copying failed.
+	if(new_skb == NULL)
 	{
-		printk(KERN_WARNING "could not copy socket buffer\n");
+		printk(KERN_WARNING "sfusion: could not copy the socket buffer.\n");
 		goto send_no_loadbalancing;
 	}
-
-	new_device=get_new_device();
-	if(new_device==NULL)
+	// Get the next device on the list.
+	new_device = get_new_device();
+	// No device was returned.
+	if(new_device == NULL)
 	{
-		printk(KERN_WARNING "could not generate device\n");
+		printk(KERN_WARNING "sfusion: could not generate device.\n");
 		goto free_skb;
 	}
-
-	new_skb->dev=new_device;
+	// Set packet's device to be the new one.
+	new_skb->dev = new_device;
+	// Send the packet through the new device.
 	dev_queue_xmit(new_skb);
+	// Update device's bandwidth for this packet.
 	update_device_counters(new_skb);
-	printk(KERN_DEBUG "sending with loadbalancing");
+	printk(KERN_DEBUG "sfusion: sending with loadbalancing.\n");
+	// Drop the old packet.
 	return NF_DROP;
-
-//on errors send as normal packet
-free_skb:
-	if(new_skb!=NULL)
-		kfree_skb(new_skb);
-send_no_loadbalancing:
-	printk(KERN_DEBUG "sending without loadbalancing\n");
-	update_device_counters(skb);
+	free_skb:
+		if(new_skb!=NULL)
+			kfree_skb(new_skb);
+	send_no_loadbalancing:
+		printk(KERN_DEBUG "sfusion: sending without load-balancing.\n");
+		update_device_counters(skb);
 	return NF_ACCEPT;
 }
-/*struct nf_hook_ops nfho_post =
-{
-	.hook = nf_hookfn2,
-	.hooknum = NF_INET_POST_ROUTING,
-	.pf = NFPROTO_IPV4,
-	.priority = NF_IP_PRI_FIRST,
-};*/
+/**
+ * init_netfilter_loadbalancer_hook		-	Initialize the hook.
+ * @Returns the hook id.
+**/
 int init_netfilter_loadbalancer_hook(void)
 {
-	printk(KERN_INFO "registering  hook");
+	printk(KERN_INFO "sfusion: registering hook.\n");
 	return nf_register_hook(&nfho_post);
 }
 /**
- * thif function return true if the given packet should be load balanced
- * skb is the packet to check
+ * should_loadbalance		-	Check if the packet applies to the 
+ * 					filter.
+ * @skb: Pointer to the socket buffer.
+ * @Returns: True if the given packet should be load-balanced.
 **/
 bool should_loadbalance(struct sk_buff *skb)
 {
-	struct device_list* dev_iter=&mydevs;
-	bool dev_exists=false;
-	struct rule_list* rule_iter=&myrules;
-	struct iphdr *ip_hdr=NULL;
+	struct device_list* dev_iter = &mydevs;
+	bool dev_exists = false;
+	struct rule_list* rule_iter = &myrules;
+	struct iphdr *ip_hdr = NULL;
 	struct tcphdr* tcp_header = NULL;
 	struct udphdr* udp_header = NULL;
-	int packet_srcport=0;
-	int packet_destport=0;
-	char *subnet_pointer=NULL;
-	int subnet_part=0;
-	unsigned int subnet=0;
-	int cidr=0;
-	char* str_subnet_part=NULL;
-	unsigned int ip=0;
+	int packet_srcport = 0;
+	int packet_destport = 0;
+	char *subnet_pointer = NULL;
+	int subnet_part = 0;
+	unsigned int subnet = 0;
+	int cidr = 0;
+	char* str_subnet_part = NULL;
+	unsigned int ip = 0;
 
-	//check if device should be load balanced
 	do
 	{
+		// Check that the device matches the one on the list.
 		if(strncmp(skb->dev->name, dev_iter->dev->name, IFNAMSIZ)==0)
-			dev_exists=true;
-		
+			dev_exists = true;
+		// Go to the next device on the list.
 		dev_iter=(struct device_list *)dev_iter->list.next;
 	}while(dev_iter!=&mydevs && dev_iter!=NULL);
-
+	// The device wasn't found.
 	if(!dev_exists)
 		return false;
-
-	//check if the packet meets any rule requirement
-	for(;rule_iter!=&myrules && rule_iter!=NULL;rule_iter=(struct rule_list *)rule_iter->list.next)
+	// Check if the packet meets any of the rule requirements.
+	for(; rule_iter != &myrules && rule_iter != NULL; rule_iter = (struct rule_list *)rule_iter->list.next)
 	{
-		ip_hdr=(struct iphdr*)skb_network_header(skb);
-		
-		//check protocol and port
-		if(rule_iter->protocol!=NULL)
+		// Get the IP header.
+		ip_hdr = (struct iphdr*)skb_network_header(skb);
+		//Protocol was set.
+		if(rule_iter->protocol != NULL)
 		{
-			if(ip_hdr->protocol==IPPROTO_UDP
-				&& strncmp(rule_iter->protocol,"udp",3)!=0
-				&& strncmp(rule_iter->protocol,"UDP",3)!=0)
+			// Packet's protocol is UDP and the rule is
+			// for TCP.
+			if(ip_hdr->protocol == IPPROTO_UDP
+				&& strncmp(rule_iter->protocol,"udp",3) != 0
+				&& strncmp(rule_iter->protocol,"UDP",3) != 0)
 					continue;
-			if(ip_hdr->protocol==IPPROTO_TCP
+			// Packet's protocol is TCP and the rule is
+			// for UDP.
+			if(ip_hdr->protocol == IPPROTO_TCP
 				&& strncmp(rule_iter->protocol,"tcp",3)!=0
 				&& strncmp(rule_iter->protocol,"TCP",3)!=0)
 					continue;
-
-			//check port and side
-			if(rule_iter->port_type!=NULL && rule_iter->ports!=NULL)
+			// Port was set.
+			if(rule_iter->port_type != NULL && rule_iter->ports != NULL)
 			{
-				if(ip_hdr->protocol==IPPROTO_TCP)
+				// Protocol was TCP.
+				if(ip_hdr->protocol == IPPROTO_TCP)
 				{
-					tcp_header = (struct tcphdr*)skb_transport_header(skb);//by internet sometimes incorrect and can use (struct tcphdr*)((char *)ip_hdr+ip_hdr->ihl*4) instead
-					packet_srcport=tcp_header->source;
-					packet_destport=tcp_header->dest;
+					// Get TCP header.
+					tcp_header = (struct tcphdr*)skb_transport_header(skb); // It is sometimes incorrect and should use (struct tcphdr*)((char *)ip_hdr+ip_hdr->ihl*4) instead.
+					// Source port.
+					packet_srcport = tcp_header->source;
+					// Destination port.
+					packet_destport = tcp_header->dest;
 				}
-				else if(ip_hdr->protocol==IPPROTO_UDP)
+				// Protocol was UDP.
+				else if(ip_hdr->protocol == IPPROTO_UDP)
 				{
+					// Get UDP header.
 					udp_header = (struct udphdr*)skb_transport_header(skb);
-					packet_srcport=udp_header->source;
-					packet_destport=udp_header->dest;
+					// Source port.
+					packet_srcport = udp_header->source;
+					// Destination port.
+					packet_destport = udp_header->dest;
 				}
+				// No protocol was set.
 				else
 					continue;
-
-				//check every port exists with correct side
+				// TODO: Check ports and types.
 				if(strncmp(rule_iter->port_type,"src",3)==0)
 					{}
 				else
 					{}
 			}
 		}
-
-		//check subnet
+		// Subnet exists.
 		if(rule_iter->subnet!=NULL)
 		{
-			//build subnet and cidr
-			subnet_pointer=rule_iter->subnet;
-
+			//build subnet and cidr.
+			subnet_pointer = rule_iter->subnet;
+			// Get the first octet.
     		str_subnet_part = strsep(&subnet_pointer, "./");
-			if(kstrtoint(str_subnet_part,10,&subnet_part)!=0)
+			// Try converting to int.
+			if(kstrtoint(str_subnet_part,10,&subnet_part) != 0)
 				continue;
-			subnet|=subnet_part<<24;
-
+			// Add to final subnet.
+			subnet |= subnet_part << 24;
+			// Get the second octet.
 			str_subnet_part = strsep(&subnet_pointer, "./");
-			if(kstrtoint(str_subnet_part,10,&subnet_part)!=0)
+			if(kstrtoint(str_subnet_part,10,&subnet_part) != 0)
 				continue;
-			subnet|=subnet_part<<16;
-
+			subnet |= subnet_part << 16;
+			// Get the third octet.
 			str_subnet_part = strsep(&subnet_pointer, "./");
-			if(kstrtoint(str_subnet_part,10,&subnet_part)!=0)
+			if(kstrtoint(str_subnet_part,10,&subnet_part) != 0)
 				continue;
-			subnet|=subnet_part<<8;
-
+			subnet |= subnet_part << 8;
+			// Get the last octet.
 			str_subnet_part = strsep(&subnet_pointer, "./");
-			if(kstrtoint(str_subnet_part,10,&subnet_part)!=0)
+			if(kstrtoint(str_subnet_part,10,&subnet_part) != 0)
 				continue;
-			subnet|=subnet_part;
-
+			subnet |= subnet_part;
+			// Get the cidr.
 			str_subnet_part = strsep(&subnet_pointer, "./");
-			if(kstrtoint(str_subnet_part,10,&cidr)!=0)
+			// Try converting to int.
+			if(kstrtoint(str_subnet_part,10,&cidr) != 0)
 				continue;
-
-			subnet=subnet>>cidr;
-			subnet=subnet<<cidr;
-
-			//get ip
-			if(strncmp(rule_iter->subnet_type,"src",3)==0)
-				ip=ip_hdr->saddr;
+			// Remove what's not part of the network ip.
+			subnet = subnet >> cidr;
+			subnet = subnet << cidr;
+			// Get IP from the packet.
+			if(strncmp(rule_iter->subnet_type,"src",3) == 0)
+				ip = ip_hdr->saddr;
 			else
-				ip=ip_hdr->daddr;
-			
-			ip>>=cidr;
-			ip<<=cidr;
-			
-			if(ip!=subnet)
+				ip = ip_hdr->daddr;
+			// Get the network ip.
+			ip >>= cidr;
+			ip <<= cidr;
+			// Match subnets.
+			if(ip != subnet)
 				continue;
 		}
-
+		// Passed all the checks.
 		return true;
 	}
-
+	// Didn't match any rule.
 	return false;
 }
 /**
- * update that a packet went through this device
+ * update_device_counters		-	Update the packet's device 
+ * 						counter.
+ * @skb - Pointer to the socket buffer.
 **/
 static void update_device_counters(struct sk_buff *skb){
-	struct device_list* dev_iter=&mydevs;
-	while(dev_iter!=NULL){
+	struct device_list* dev_iter = &mydevs;
+	// Go over the device list.
+	while(dev_iter != NULL){
+		// Find the socket's device.
 		if(strncmp(skb->dev->name, dev_iter->dev->name, IFNAMSIZ)==0){
-			dev_iter->amount_sent++;
+			// Increase counter.
+			(dev_iter->amount_sent)++;
 			break;
 		}
 	}
 }
 /**
- * get the new loadbalanced net device
+ * get_new_device		-	Get the next device on the list
+ *					of the load-balanced devices.
 **/
 struct net_device* get_new_device(void)
 {
-	int random=0;
-	struct device_list* dev_iter=&mydevs;
-	int sum_packets=0;
+	int random = 0;
+	struct device_list* dev_iter = &mydevs;
+	int sum_packets = 0;
 
-	//sum_packets
-	while(dev_iter!=NULL){
-		sum_packets+=dev_iter->last_sec_amount_sent;
-		dev_iter=(struct device_list *)dev_iter->list.next;
+	// Go over the list.
+	while(dev_iter != NULL){
+		// Sum up each device's last second's bandwidth.
+		sum_packets += dev_iter->last_sec_amount_sent;
+		// Move to the next device.
+		dev_iter = (struct device_list *)dev_iter->list.next;
 	}
-
-	//generate random int
+	// Generate a random number.
 	get_random_bytes(&random,sizeof(random));
-	random=random%sum_packets;
-
-	//choose device
-	dev_iter=&mydevs;
-	sum_packets=0;
+	// Not higher than the sum from above.
+	random = random % sum_packets;
+	dev_iter = &mydevs;
+	sum_packets = 0;
+	// Go over the devices.
 	while(dev_iter!=NULL){
-		sum_packets+=dev_iter->last_sec_amount_sent;
-		if(sum_packets>=random)
+		// Sum up the bandwidth.
+		sum_packets += dev_iter->last_sec_amount_sent;
+		// The sum reached the random number.
+		if(sum_packets >= random)
+			// Choose the device.
 			return dev_iter->dev;
 	}
-	
-	printk(KERN_ERR "no device found to loadbalance");
+	// No device was found.
+	printk(KERN_ERR "sfusion: no device found for load-balancing.\n");
 	return NULL;
 }
 
@@ -355,6 +390,7 @@ struct net_device* get_new_device(void)
 void device_exit(void) {
 	// Release the device.
 	unregister_chrdev(device_major, DEVICE_NAME);
+	// Delete the timer.
 	del_timer(&bandwidth_timer);
 	printk(KERN_INFO "sufsion: sfusion unloaded.\n");
 }
@@ -404,7 +440,7 @@ static ssize_t device_read(struct file *fp, char *buff, size_t length, loff_t *o
 	struct list_head *pos;
 	struct device_list *tmp_device_list;
 	struct rule_list *tmp_rule_list;
-	int i=0, j=0, k=0;
+	int i = 0, j = 0, k = 0;
 	char msg[BUFFER_SIZE];
 	
 	// Change to EOF and don't run forever.
@@ -453,7 +489,7 @@ static ssize_t device_read(struct file *fp, char *buff, size_t length, loff_t *o
 			sprintf(msg, "%s -protocol %s\n", msg, tmp_rule_list->protocol);
 		}
 	}
-	printk(KERN_DEBUG "sfusion: devs %d , rules %d\n", j, k);
+	printk(KERN_DEBUG "sfusion: devs %d , rules %d.\n", j, k);
 	// If it was requested twice, return 0.
 	if(for_eof == 0)
 		return 0;
@@ -547,7 +583,6 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 			// Check if word equals to -ports.
 			if(strmatch(word, "-ports"))
 			{
-				printk(KERN_INFO "sfusion: text1 %s.\n", word);
 				// Move to the next word.
 				word_length = get_next_word(buff + buff_offset, word, &buff_length, &buff_offset, WORD_SEPARATOR);
 				// Count the number of ports.
@@ -570,7 +605,6 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 						goto port_not_int_failed;
 					count++;
 				} while(word_length > 0);
-				printk(KERN_INFO "portsss: %d\n", ports[0]);
 				// Save port array.
 				tmp_rule_list->ports = ports;
 				// Free allocated space for the values.
@@ -586,7 +620,6 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 				{
 					// Set port type.
 					tmp_rule_list->port_type = strclone(word);
-					printk(KERN_INFO "sfusion: text2 %s.\n", word);
 				}
 				// Unknown word.
 				else
@@ -595,7 +628,7 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 			// Check if word equals to -subnet.
 			else if(strmatch(word, "-subnet"))
 			{
-				printk(KERN_INFO "sfusion: text3 %s.\n", word);
+				// TODO: Handle subnet.
 			}
 			// Check if word equals to -subnet_type.
 			else if(strmatch(word, "-subnet_type"))
@@ -607,7 +640,6 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 				{
 					// Set subnet type.
 					tmp_rule_list->subnet_type = strclone(word);
-					printk(KERN_INFO "sfusion: text4 %s.\n", word);
 				}
 				// Unknown word.
 				else
@@ -623,7 +655,6 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 				{
 					// Set subnet type.
 					tmp_rule_list->protocol = strclone(word);
-					printk(KERN_INFO "sfusion: text5 %s.\n", word);
 				}
 				// Unknown word.
 				else
@@ -668,7 +699,7 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 		goto unknown_word_failed;
 	goto success;
 	port_not_int_failed:
-	printk(KERN_ALERT "sfusion: One of the ports wasn't an integer.\n");
+	printk(KERN_ALERT "sfusion: one of the ports wasn't an integer.\n");
 	// Free allocated space for the ports.
 	kfree(ports);
 	// Free allocated space for the values.
@@ -677,22 +708,22 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 	kfree(word);
 	return -1;
 	rule_not_int_failed:
-	printk(KERN_ALERT "sfusion: The rule isn't an integer.\n");
+	printk(KERN_ALERT "sfusion: the rule isn't an integer.\n");
 	// Free allocated space for the words.
 	kfree(word);
 	return -1;
 	too_short_failed:
-	printk(KERN_ALERT "sfusion: Some parameters are missing in the input.\n");
+	printk(KERN_ALERT "sfusion: some parameters are missing in the input.\n");
 	// Free allocated space for the words.
 	kfree(word);
 	return -1;
 	unknown_word_failed:
-	printk(KERN_ALERT "sfusion: Unknown parameter was entered..\n");
+	printk(KERN_ALERT "sfusion: unknown parameter was entered..\n");
 	// Free allocated space for the words.
 	kfree(word);
 	return -1;
 	dev_null_failed:
-	printk(KERN_INFO "sfusion: Unknown device was entered.\n");
+	printk(KERN_INFO "sfusion: unknown device was entered.\n");
 	// Free allocated space for the values.
 	kfree(val);
 	// Free allocated space for the words.
@@ -705,8 +736,9 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 }
 
 /**
- * strcount				-	Find the number of occurrences of
- *						a certain char.
+ * strcount				-	Find the number of 
+ *						occurrences of a certain 
+ * 						char.
  * @str: The input string.
  * @length: The string's length.
  * @seperator: The char that we want to find.
@@ -718,7 +750,6 @@ static ssize_t strcount(const char *str,const ssize_t length, const int separato
 	int str_len = length;
 	// Find the first occurrence of the separator.
 	char *found = strnchr(str, str_len, separator);
-	//printk(KERN_INFO "sfusion: found %s len: %d", found, str_len);
 	char *new_pos = found;
 	const char * old_pos = str;
 	// Find all the rest.
@@ -733,8 +764,8 @@ static ssize_t strcount(const char *str,const ssize_t length, const int separato
 	return i;
 }
 /**
- * strmatch				-	Returns true if strings match and
- *						false otherwise.
+ * strmatch				-	Returns true if strings 
+ * 						match and false otherwise.
  * @str1: The first string.
  * @str2: The second string.
  * Returns: True if match and False otherwise.
@@ -783,11 +814,6 @@ static ssize_t get_next_word(const char *input, char *output, int *input_length,
 		// Get word's length.
 		word_size = found - input;
 	}
-	
-	//printk(KERN_DEBUG "sfusion: input %s.\n", input);
-	//printk(KERN_DEBUG "sfusion: offset %d input_length %d separator %c.\n", word_size, length, separator);
-	//printk(KERN_DEBUG "sfusion: found %s.\n", found);
-	
 	// Copy the word to the output.
 	memcpy(output, input, word_size);
 	// Add null terminator to the output string.
