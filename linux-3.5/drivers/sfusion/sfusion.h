@@ -43,6 +43,8 @@ static ssize_t device_write(struct file *, const char *, size_t, loff_t *);
 #define NEWLINE_SEPARATOR '\n'
 #define EOL_SEPARATOR '\0'
 #define VALUE_SEPARATOR ','
+#define SUBNET_SEPARATOR '.'
+#define CIDR_SEPARATOR '/'
 
 static ssize_t get_next_word(const char *input, char *output, int *input_length, int *input_offset, const int separator);
 static char *strclone(const char *str);

@@ -521,6 +521,7 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 	int word_offset = 0;
 	int num_ports = 0;
 	int count = 0;
+	int octet = 0;
 	long rule_to_del = 0;
 	int *ports;
 	struct net *initnet = &init_net;
@@ -548,7 +549,7 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 		if(buff_length != 0)
 			goto unknown_word_failed;
 		// Allocate space for all the values in the word.
-		val =  kmalloc(word_length * sizeof(char), GFP_KERNEL);
+		val = kmalloc(word_length * sizeof(char), GFP_KERNEL);
 		// Run until the last value.
 		do
 		{
@@ -628,7 +629,25 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 			// Check if word equals to -subnet.
 			else if(strmatch(word, "-subnet"))
 			{
-				// TODO: Handle subnet.
+				// Move to the next word.
+				word_length = get_next_word(buff + buff_offset, word, &buff_length, &buff_offset, WORD_SEPARATOR);
+				// Allocate space for all the values in the word.
+				val = kmalloc(word_length * sizeof(char), GFP_KERNEL);
+				for(count = 0; count < 4; count++)
+				{
+					// Get the values.
+					if(count != 3)
+						val_length = get_next_word(word + word_offset, val, &word_length, &word_offset, SUBNET_SEPARATOR);
+					else
+						val_length = get_next_word(word + word_offset, val, &word_length, &word_offset, CIDR_SEPARATOR);
+					// Try converting string to int.
+					if(kstrtoint(val, 10, octet) != 0)
+						goto subnet_not_int_failed;
+				}
+				// Save subnet.
+				tmp_rule_list->subnet = strclone(word);
+				// Free allocated space for the values.
+				kfree(val);
 			}
 			// Check if word equals to -subnet_type.
 			else if(strmatch(word, "-subnet_type"))
@@ -698,6 +717,13 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 	else
 		goto unknown_word_failed;
 	goto success;
+	subnet_not_int_failed:
+	printk(KERN_ALERT "sfusion: subnet doesn't match pattern.\n");
+	// Free allocated space for the values.
+	kfree(val);
+	// Free allocated space for the words.
+	kfree(word);
+	return -1;
 	port_not_int_failed:
 	printk(KERN_ALERT "sfusion: one of the ports wasn't an integer.\n");
 	// Free allocated space for the ports.
