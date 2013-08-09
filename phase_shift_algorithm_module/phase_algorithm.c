@@ -306,11 +306,11 @@ static void timer_callback (struct task_struct* p, int user_tick)
 	}
 }
 
-/**
- * phase_shifts_init() is the module init function. Initializes callbacks.
- */ 
 
-long phase_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+/**
+ * phase_shifts_ioctl() sets the locality size as the value pointed to by arg.
+ */ 
+long phase_shifts_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	locality_size = *((unsigned long*)arg);
 	printk(KERN_ALERT "Phase shifts Algorithm: current locality size: %lu.\n", locality_size);
@@ -319,9 +319,11 @@ long phase_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 }
                             
 static const struct file_operations phase_char_fops = {
-	.unlocked_ioctl = phase_ioctl
+	.unlocked_ioctl = phase_shifts_ioctl
 };
-
+/**
+ * phase_shifts_init() is the module init function. Initializes callbacks.
+ */ 
 static int phase_shifts_init(void)
 {	
 	// Creating a char device for setting locality size.
@@ -364,21 +366,21 @@ static int phase_shifts_init(void)
 	printk(KERN_ALERT "Phase shifts detection algorithm activated. \n");
 	return 0;
 
-	device_fail:
+device_fail:
 	
 	device_destroy(phase_class, phase_dev);
 	printk(KERN_ALERT "device creation failed... unregistering\n");
 
-	cdev_fail:
+cdev_fail:
 	
 	printk(KERN_ALERT "cdev registration failed... unregistering\n");
 	cdev_del(phase_char_dev);
 	
-	class_fail:
+class_fail:
 	class_destroy(phase_class);
 	printk(KERN_ALERT "class registration failed... unregistered\n");
 	
-	register_failed:
+register_failed:
 	unregister_chrdev_region(phase_dev, 1);
 	
 	return res;
