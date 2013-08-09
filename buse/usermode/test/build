@@ -1,0 +1,1 @@
+gcc -Wall -L/home/arik/Project/git/usermode/lib main.c -lgoldengate -o test 
