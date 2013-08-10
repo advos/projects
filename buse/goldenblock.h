@@ -17,17 +17,17 @@ typedef struct RequestNode
 
 typedef struct GoldenBlock
 {
-char name[MAX_NAME];
-kuid_t owner_uid;
-pid_t owner_pid;
-int internal_fd; //The key we use to search for the right goldenblock. Returned to user as a token for requesting operations on the device
-int major;
-spinlock_t lock;
-struct gendisk* gd;
-struct request_queue_t* queue;
-struct list_head list;
-RequestNode waiting_requests_head;
-int refcount;
+	char name[MAX_NAME];
+	kuid_t owner_uid;
+	pid_t owner_pid;
+	int internal_fd; //The key we use to search for the right goldenblock. Returned to user as a token for requesting operations on the device
+	int major;
+	spinlock_t lock;
+	struct gendisk* gd;
+	struct request_queue_t* queue;
+	struct list_head list;
+	struct list_head request_list;
+	int refcount;
 } GoldenBlock;
 
 void golden_block_list_initialize(GoldenBlock* block);

@@ -9,25 +9,25 @@ static int goldenchar_open(struct inode* ind, struct file* filep);
 static int goldenchar_release(struct inode* ind, struct file* filep);
 static long goldenchar_ioctl(struct file* filep, unsigned int num, unsigned long ptr);
 
-static int handle_request(struct file* filep, GoldenRequest* request);
+static int handle_request(struct filel* filep, GoldenRequest* request);
 static int setup_new_device(struct file* filep, GoldenRequest* request);
 static int remove_device(struct file* filep, GoldenRequest* request);
 
+static GoldenBlock* search_for_block_device_by_fd(int fd, kuid_t uid, pid_t pid);
 static void golden_block_assign_fd(GoldenBlock* block, kuid_t uid, pid_t pid);
 
 static int get_io(GoldenRequest* request);
 
 static void sanitize_request(GoldenRequest* request);
-struct node* delete(struct node **front, struct node **rear);
-void insert(struct node **front, struct node **rear,char *value,int size);
-static GoldenGate* _golden;
-extern struct node *front,*rear;
+
 static const struct file_operations goldenchar_fops = {
 	.owner = THIS_MODULE,
 	.open = goldenchar_open,
 	.unlocked_ioctl = goldenchar_ioctl,
 	.release = goldenchar_release
 };
+
+static GoldenGate* _golden;
 
 static int goldenchar_open(struct inode* ind, struct file* filep)
 {
@@ -41,10 +41,15 @@ static int goldenchar_release(struct inode* ind, struct file* filep)
 
 static long goldenchar_ioctl(struct file* filep, unsigned int num, unsigned long ptr)
 {
-	GoldenRequest* request = (GoldenRequest*)ptr;
-	struct node *temp;
-	int size = 0;
-	char buffer[MAX_SIZE_BUFFER];
+	GoldenRequest* request = NULL;
+
+	request = kmalloc(sizeof(*request), GFP_KERNEL);
+	if (request == NULL)
+		return -ENOMEM;
+
+	if (copy_from_user(request, (void __user *)ptr, sizeof(*request)))
+		return -EFAULT;
+	
 	printk(KERN_ALERT "Golden Char: ioctl called");
 
 	switch(num)
@@ -83,7 +88,24 @@ static int handle_request(struct file* filep, GoldenRequest* request)
 
 static int get_io(GoldenRequest* request)
 {
-	return 0;
+	int fd = request->sel.DeviceIoRequest;
+	struct RequestNode* next_request = NULL;
+
+	GoldenBlock* block_dev = search_for_block_device_by_fd(fd, current_uid(), task_pid_nr(current));
+
+	if (block_dev == NULL)
+		return -1;
+
+	next_request = golden_block_pop_request(block_dev);
+	while (next_request == NULL)
+	{
+		msleep(60 * 1000);
+		next_request = golden_block_pop_request(block_dev);
+	}
+
+	//Now fill out parts for usermode
+
+	return 0;	
 }
 
 static void sanitize_request(GoldenRequest* request)
@@ -146,6 +168,21 @@ static void golden_block_assign_fd(GoldenBlock* block, kuid_t uid, pid_t pid)
 	}
 
 	block->internal_fd = max_fd + 1;
+}
+
+static GoldenBlock* search_for_block_device_by_fd(int fd, kuid_t uid, pid_t pid)
+{
+	struct list_head* iter;
+
+	list_for_each(iter, &(_golden->gblock_list_head.list))
+	{
+		GoldenBlock* temp = list_entry(iter, GoldenBlock, list);
+
+		if ((temp->internal_fd == fd) && uid_eq(uid, temp->owner_uid) && (temp->owner_pid == pid)
+		return temp;
+	}
+
+	return NULL;
 }
 
 static int remove_device(struct file* filep, GoldenRequest* request)

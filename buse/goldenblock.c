@@ -1,10 +1,23 @@
 #include <linux/module.h>
 #include <linux/delay.h>
 #include "goldenblock.h"
-void insert(struct node **front, struct node **rear,char *value,int size);
-struct node* delete(struct node **front, struct node **rear);
 #define SECTOR_SIZE 512
-struct node *front=NULL,*rear = NULL;
+
+static int goldenblock_open(struct block_device* bdev, fmode_t mode);
+static int goldenblock_release(struct gendisk* gd, fmode_t mode);
+
+void goldenblock_request(struct request_queue* queue);
+void golden_block_list_initialize(GoldenBlock* block);
+int golden_block_create(char* name, int capacity, int minors, GoldenBlock** out);
+
+RequestNode* golden_block_pop_request(GoldenBlock* block_dev);
+
+
+static const struct block_device_operations goldenblock_ops = {
+       .owner = THIS_MODULE,
+       .open = goldenblock_open,
+       .release = goldenblock_release
+}
 
 static int goldenblock_open(struct block_device* bdev, fmode_t mode)
 {
@@ -27,23 +40,8 @@ static int goldenblock_release(struct gendisk* gd, fmode_t mode)
 	return 0;
 }
 
-void device_write(sector_t sector_off, u8 *buffer, unsigned int size)
-{
-	 insert(&front,&rear,buffer,size);
-}
-void device_read(sector_t sector_off, u8 *buffer, unsigned int sectors)
-{
-	struct node *temp;
-	do{
-		temp=delete(&front,&rear); 
-		usleep_range(10000, 20000);
-	}while(temp!=NULL);
-	memcpy(buffer,temp->data,sectors);
-	kfree(temp->data);
-	kfree(temp);	
-}
-
-static int rb_transfer(struct request *req)
+/*
+static int goldenblock_handle_request(struct request *req)
 {
  
     int dir = rq_data_dir(req);
@@ -74,11 +72,11 @@ static int rb_transfer(struct request *req)
         sectors = bv->bv_len / RB_SECTOR_SIZE;
         printk(KERN_DEBUG "rb: Sector Offset: %lld; Buffer: %p; Length: %d sectors\n",
             sector_offset, buffer, sectors);
-        if (dir == WRITE) /* Write to the device */
+        if (dir == WRITE) // Write to the device 
         {
             device_write(start_sector + sector_offset, buffer, bv->bv_len);//sectors);
         }
-        else /* Read from the device */
+        else // Read from the device 
         {
             device_read(start_sector + sector_offset, buffer, bv->bv_len);//sectors);
         }
@@ -92,25 +90,24 @@ static int rb_transfer(struct request *req)
 
     return ret;
 }
+*/
 
 void goldenblock_request(struct request_queue* queue)
 {
     struct request *req;
-    int ret;
- 
+
     /* Gets the current request from the dispatch queue */
     while ((req = blk_fetch_request(queue)) != NULL)
-    {
-        ret = rb_transfer(req);
-        __blk_end_request_all(req, ret);
-    }
+	{
+		RequestNode* request_node = kzalloc(sizeof(*request_node), GFP_KERNEL);
+		if (request_node == NULL)
+			return; //Isn't supposed to happen. But if it does - it is very bad
+	
+		request_node->req = req;
+		list_add(&(request_node->list), &(((GoldenBlock*)req->rq_disk->private_data)->request_list));
+	}
 }
 
-static const struct block_device_operations goldenblock_ops = {
-	.owner = THIS_MODULE,
-	.open = goldenblock_open,
-	.release = goldenblock_release
-};
 
 void golden_block_list_initialize(GoldenBlock* block)
 {
@@ -133,6 +130,8 @@ int golden_block_create(char* name, int capacity, int minors, GoldenBlock** out)
 	block->owner_uid = current_uid();
 	printk(KERN_ALERT "golden_block_create: setting current uid to %d", block->owner_uid);
 	block->refcount = 0;
+
+	INIT_LIST_HEAD(&(block->request_list));
 
 	block->major = register_blkdev(0, name);
 	if (block->major < 0)
@@ -180,4 +179,18 @@ end:
 	}
 
 	return err;	
+}
+
+RequestNode* golden_block_pop_request(GoldenBlock* block_dev)
+{
+	RequestNode* node = NULL;
+
+	if (list_empty(&block_dev->request_list))
+		return NULL;
+
+	node = list_entry(block_dev->request_list.next, RequestNode, next);
+
+	list_del(block_dev->request_list.next);
+
+	return node;
 }
