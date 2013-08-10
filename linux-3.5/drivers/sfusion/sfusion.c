@@ -69,7 +69,12 @@ static rule_list myrules;
 /* Counter for the number of rules */
 static int num_rules = 0;
 /* Counter for setting the end of file */
-static int for_eof = 0;
+static 
+int for_eof = 0;
+/* device rw lock*/
+static struct rw_semaphore dev_lock;
+/* rule rw lock */
+static struct rw_semaphore rule_lock;
 
  
 /**
@@ -78,6 +83,9 @@ static int for_eof = 0;
 int device_init(void) {
 	int op_result=0;
 	int sec_as_jiffies=usecs_to_jiffies(1);
+
+	init_rwsem(&dev_lock);
+	init_rwsem(&rule_lock);
 
 	// Set a new available device major.
 	device_major = register_chrdev(0, DEVICE_NAME, &fops);
@@ -106,6 +114,7 @@ int device_init(void) {
 **/
 void set_bandwidth(unsigned long data){
 	struct device_list *device_iter = &mydevs;
+	down_write(&dev_lock);
 	// Go over the devices.
 	while(device_iter != NULL){
 		// Update device's bandwidth for the last second to be the
@@ -116,6 +125,7 @@ void set_bandwidth(unsigned long data){
 		// Go to the next node in the list.
 		device_iter = (struct device_list *)device_iter->list.next;
 	}
+	up_write(&dev_lock);
 }
 /**
  * loadbalance_hook		-	Apply load-balance on the packet if 
@@ -215,6 +225,7 @@ bool should_loadbalance(struct sk_buff *skb)
 	char* str_subnet_part = NULL;
 	unsigned int ip = 0;
 
+	down_read(&dev_lock);
 	do
 	{
 		// Check that the device matches the one on the list.
@@ -223,9 +234,12 @@ bool should_loadbalance(struct sk_buff *skb)
 		// Go to the next device on the list.
 		dev_iter=(struct device_list *)dev_iter->list.next;
 	}while(dev_iter!=&mydevs && dev_iter!=NULL);
+	up_read(&dev_lock);
+
 	// The device wasn't found.
 	if(!dev_exists)
 		return false;
+	down_read(&rule_lock);
 	// Check if the packet meets any of the rule requirements.
 	for(; rule_iter != &myrules && rule_iter != NULL; rule_iter = (struct rule_list *)rule_iter->list.next)
 	{
@@ -280,7 +294,7 @@ bool should_loadbalance(struct sk_buff *skb)
 					for(i = 1; i <= (rule_iter->ports)[0]; i++)
 					{
 						// Port matches the packets'.
-						if(strncmp((rule_iter->ports)[i], packet_srcport, IFNAMSIZ) == 0)
+						if((rule_iter->ports)[i] == packet_srcport)
 							found = true;
 					}
 					// No port was found.
@@ -295,7 +309,7 @@ bool should_loadbalance(struct sk_buff *skb)
 					for(i = 1; i <= (rule_iter->ports)[0]; i++)
 					{
 						// Port matches the packets'.
-						if(strncmp((rule_iter->ports)[i], packet_destport, IFNAMSIZ) == 0)
+						if((rule_iter->ports)[i] == packet_destport)
 							found = true;
 					}
 					// No port was found.
@@ -354,9 +368,11 @@ bool should_loadbalance(struct sk_buff *skb)
 				continue;
 		}
 		// Passed all the checks.
+		up_read(&rule_lock);
 		return true;
 	}
 	// Didn't match any rule.
+	up_read(&rule_lock);
 	return false;
 }
 /**
@@ -366,6 +382,7 @@ bool should_loadbalance(struct sk_buff *skb)
 **/
 static void update_device_counters(struct sk_buff *skb){
 	struct device_list* dev_iter = &mydevs;
+	down_write(&dev_lock);
 	// Go over the device list.
 	while(dev_iter != NULL){
 		// Find the socket's device.
@@ -375,6 +392,7 @@ static void update_device_counters(struct sk_buff *skb){
 			break;
 		}
 	}
+up_write(&dev_lock);
 }
 /**
  * get_new_device		-	Get the next device on the list
@@ -385,6 +403,7 @@ struct net_device* get_new_device(void)
 	int random = 0;
 	struct device_list* dev_iter = &mydevs;
 	int sum_packets = 0;
+	down_read(&dev_lock);
 
 	// Go over the list.
 	while(dev_iter != NULL){
@@ -408,6 +427,7 @@ struct net_device* get_new_device(void)
 			// Choose the device.
 			return dev_iter->dev;
 	}
+	up_read(&dev_lock);
 	// No device was found.
 	printk(KERN_ERR "sfusion: no device found for load-balancing.\n");
 	return NULL;
@@ -475,6 +495,7 @@ static ssize_t device_read(struct file *fp, char *buff, size_t length, loff_t *o
 	// Change to EOF and don't run forever.
 	for_eof = (for_eof + 1) % 2;	
 	// Check if devices list isn't empty.
+	down_read(&dev_lock);
 	if(list_empty(&mydevs.list) == 0)
 	{
 		j = 0;
@@ -490,7 +511,9 @@ static ssize_t device_read(struct file *fp, char *buff, size_t length, loff_t *o
 		}
 		strcat(msg, "\n");
 	}
+	up_read(&dev_lock);
 	pos = NULL;
+	down_read(&rule_lock);
 	// Check if rules list isn't empty.
 	if(!list_empty(&myrules.list))
 	{
@@ -518,6 +541,7 @@ static ssize_t device_read(struct file *fp, char *buff, size_t length, loff_t *o
 			sprintf(msg, "%s -protocol %s\n", msg, tmp_rule_list->protocol);
 		}
 	}
+	up_read(&rule_lock);
 	printk(KERN_DEBUG "sfusion: devs %d , rules %d.\n", j, k);
 	// If it was requested twice, return 0.
 	if(for_eof == 0)
@@ -559,9 +583,13 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 	struct rule_list *tmp_rule_list;
 	struct list_head *pos;
 	// Initialize a list that will hold the devices.
+	down_write(&dev_lock);
 	INIT_LIST_HEAD(&mydevs.list);
+	up_write(&dev_lock);
 	// Initialize a list that will hold the rules.
+	down_write(&rule_lock);
 	INIT_LIST_HEAD(&myrules.list);
+	up_write(&rule_lock);
 	// Allocate space for the words.
 	word = kmalloc(length * sizeof(char), GFP_KERNEL);
 	// Get the first word.
@@ -572,6 +600,7 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 	// Check if word equals to set_devices.
 	if(strmatch(word, "set_devices"))
 	{
+		down_write(&dev_lock);
 		// Move to the next word.
 		word_length = get_next_word(buff + buff_offset, word, &buff_length, &buff_offset, NEWLINE_SEPARATOR);
 		// This isn't the last word.
@@ -599,10 +628,12 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 		} while(word_length > 0);
 		// Free allocated space for the values.
 		kfree(val);
+		up_write(&dev_lock);
 	}
 	// Check if word equals to add_rule.
 	else if(strmatch(word, "add_rule"))
 	{
+		down_write(&rule_lock);
 		// Allocate a node in the list.
 		tmp_rule_list = kmalloc(sizeof(struct rule_list), GFP_KERNEL);
 		// Run until the last value.
@@ -671,7 +702,7 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 					else
 						val_length = get_next_word(word + word_offset, val, &word_length, &word_offset, CIDR_SEPARATOR);
 					// Try converting string to int.
-					if(kstrtoint(val, 10, octet) != 0)
+					if(kstrtoint(val, 10, &octet) != 0)
 						goto subnet_not_int_failed;
 				}
 				// Save subnet.
@@ -723,10 +754,12 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 			// Add node to the list.
 			list_add(&(tmp_rule_list->list), &(myrules.list));			
 		}
+		up_write(&rule_lock);
 	}
 	// Check if word equals to remove_rule.
 	else if(strmatch(word, "remove_rule"))
 	{
+		down_write(&rule_lock);
 		// Move to the next word.
 		word_length = get_next_word(buff + buff_offset, word, &buff_length, &buff_offset, NEWLINE_SEPARATOR);
 		// This isn't the last word.
@@ -743,6 +776,7 @@ static ssize_t device_write(struct file *fp, const char *buff, size_t length, lo
 				// Delete it.
 				list_del(&tmp_rule_list->list);
 		}
+		up_write(&rule_lock);
 	}
 	else
 		goto unknown_word_failed;
