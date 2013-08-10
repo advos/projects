@@ -24,6 +24,13 @@ typedef enum BlockDeviceOperation
 	BLOCK_DEVICE_WRITE,
 } BlockDeviceOperation;
 
+typedef struct IoDescriptor
+{
+	int start_sector;
+	int length;
+	char* data;
+} IoDescriptor;
+
 typedef struct GoldenRequest
 {
 GoldenCharRequestType request_type;
@@ -47,11 +54,8 @@ union sel
 	{
 		int fd;
 		int request_id;
-		BlockDeviceOperation op;
-		int sector_start;
-		int sector_offset;
-		char* operation_buffer;
-		int operation_buffer_size;
+		int direction;
+		IoDescriptor* descriptor;
 	} DeviceIoRequest;
 
 	//This struct is filled out by the usermode app to represent a completed I/O Operation
@@ -60,8 +64,7 @@ union sel
 	{
 		int fd;
 		int request_id;
-		char* operation_buffer;
-		int operation_buffer_size;
+		IoDescriptor* descriptor;
 	} DeviceIoCompleteRequest;
 	} sel;
 } GoldenRequest;

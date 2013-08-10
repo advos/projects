@@ -40,58 +40,6 @@ static int goldenblock_release(struct gendisk* gd, fmode_t mode)
 	return 0;
 }
 
-/*
-static int goldenblock_handle_request(struct request *req)
-{
- 
-    int dir = rq_data_dir(req);
-    sector_t start_sector = blk_rq_pos(req);
-    unsigned int sector_cnt = blk_rq_sectors(req);
- 
-    struct bio_vec *bv;
-    struct req_iterator iter;
- 
-    sector_t sector_offset;
-    unsigned int sectors;
-    u8 *buffer;
- 
-    int ret = 0;
- 
-    sector_offset = 0;
-    rq_for_each_segment(bv, req, iter)
-    {
-        buffer = page_address(bv->bv_page) + bv->bv_offset;
-        if (bv->bv_len % RB_SECTOR_SIZE != 0)
-        {
-            printk(KERN_ERR "rb: Should never happen: "
-                "bio size (%d) is not a multiple of RB_SECTOR_SIZE (%d).\n"
-                "This may lead to data truncation.\n",
-                bv->bv_len, RB_SECTOR_SIZE);
-            ret = -EIO;
-        }
-        sectors = bv->bv_len / RB_SECTOR_SIZE;
-        printk(KERN_DEBUG "rb: Sector Offset: %lld; Buffer: %p; Length: %d sectors\n",
-            sector_offset, buffer, sectors);
-        if (dir == WRITE) // Write to the device 
-        {
-            device_write(start_sector + sector_offset, buffer, bv->bv_len);//sectors);
-        }
-        else // Read from the device 
-        {
-            device_read(start_sector + sector_offset, buffer, bv->bv_len);//sectors);
-        }
-        sector_offset += sectors;
-    }
-    if (sector_offset != sector_cnt)
-    {
-        printk(KERN_ERR "rb: bio info doesn't match with the request info");
-        ret = -EIO;
-    }
-
-    return ret;
-}
-*/
-
 void goldenblock_request(struct request_queue* queue)
 {
     struct request *req;
@@ -101,7 +49,10 @@ void goldenblock_request(struct request_queue* queue)
 	{
 		RequestNode* request_node = kzalloc(sizeof(*request_node), GFP_KERNEL);
 		if (request_node == NULL)
-			return; //Isn't supposed to happen. But if it does - it is very bad
+		{
+			__blk_end_request_all(req, -ENOMEM);
+			continue;
+		}
 	
 		request_node->req = req;
 		list_add(&(request_node->list), &(((GoldenBlock*)req->rq_disk->private_data)->request_list));
@@ -141,7 +92,8 @@ int golden_block_create(char* name, int capacity, int minors, GoldenBlock** out)
 	}
 
 	printk(KERN_ALERT "golden_block_create(): registered block device");
-	spin_lock_init(&(block->lock));
+	spin_lock_init(&(block->request_queue_lock));
+	spin_lock_init(&(block->goldenblock_lock));
 
 	block->gd = alloc_disk(minors);
 
@@ -158,7 +110,7 @@ int golden_block_create(char* name, int capacity, int minors, GoldenBlock** out)
 	strcpy(block->gd->disk_name, name);
 	set_capacity(block->gd, capacity * SECTOR_SIZE);
 
-	block->gd->queue = blk_init_queue(goldenblock_request, &block->lock);
+	block->gd->queue = blk_init_queue(goldenblock_request, &block->request_queue_lock);
 	if (block->gd->queue == NULL)
 	{
 		err = -ENOMEM;
@@ -193,4 +145,22 @@ RequestNode* golden_block_pop_request(GoldenBlock* block_dev)
 	list_del(block_dev->request_list.next);
 
 	return node;
+}
+
+static void golden_block_add_request_to_usermode_pending_list(GoldenBlock* block_dev, RequestNode* request_node)
+{
+	struct list_head iter;
+	int max_request_id = 1;
+
+	list_for_each(iter, &(block_dev->pending_for_usermode_request_list))
+	{
+		RequestNode* node = list_entry(iter, RequestNode, next);
+
+		if (node->request_id > max_request_id)
+			max_request_id = node->request_id;
+	}
+
+	request_node->request_id = max_request_id + 1;
+
+	list_add(&(request_node->next), &(block_dev->pending_for_usermode_request_list));
 }

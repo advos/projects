@@ -12,6 +12,7 @@
 typedef struct RequestNode
 {
 	struct request* req;
+	int request_id;
 	struct list_head next;
 } RequestNode;
 
@@ -22,11 +23,13 @@ typedef struct GoldenBlock
 	pid_t owner_pid;
 	int internal_fd; //The key we use to search for the right goldenblock. Returned to user as a token for requesting operations on the device
 	int major;
-	spinlock_t lock;
+	spinlock_t request_queue_lock; //Used for request queue
+	spinlock_t goldenblock_lock; //Used for other goldenblock operations
 	struct gendisk* gd;
 	struct request_queue_t* queue;
 	struct list_head list;
 	struct list_head request_list;
+	struct list_head pending_for_usermode_request_list;
 	int refcount;
 } GoldenBlock;
 

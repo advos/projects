@@ -88,7 +88,7 @@ static int handle_request(struct file* filep, GoldenRequest* request)
 
 static int get_io(GoldenRequest* request)
 {
-	int fd = request->sel.DeviceIoRequest;
+	int fd = request->sel.DeviceIoRequest.fd;
 	struct RequestNode* next_request = NULL;
 
 	GoldenBlock* block_dev = search_for_block_device_by_fd(fd, current_uid(), task_pid_nr(current));
@@ -99,13 +99,71 @@ static int get_io(GoldenRequest* request)
 	next_request = golden_block_pop_request(block_dev);
 	while (next_request == NULL)
 	{
+		printk(KERN_ALERT "get_io(): No request given, sleeping for a minute\n");
 		msleep(60 * 1000);
 		next_request = golden_block_pop_request(block_dev);
 	}
 
-	//Now fill out parts for usermode
+	//Put the request in the usermode pending list
+	golden_block_add_request_to_usermode_pending_list(block_dev, next_request);
 
-	return 0;	
+	//Now fill out parts for usermode
+	request->sel.DeviceIoRequest.request_id = next_request->request_id;
+
+	return generate_usermode_request_from_request(golden_request, next_request);	
+}
+
+static int generate_usermode_request_from_request(GoldenRequest* golden_request, struct request* io_request)
+{
+	struct bio_vec *bv;
+	struct req_iterator iter;
+	char* buffer;
+	int direction = rq_data_dir(io_request);
+	unsigned int total_buffer_length = 0;
+	unsigned int offset = 0;
+	int status = -ENOMEM;
+
+	IoDescriptor* current_descriptor = NULL;
+	
+	golden_request->sel.DeviceIoRequest.direction = direction;
+	
+	golden_request->sel.DeviceIoRequest.descriptor = kzalloc(sizeof(IoDescriptor), GFP_USER);
+
+	if (golden_request->sel.DeviceIoRequest.descriptor == NULL)
+		goto err;
+
+	current_descriptor = golden_request->sel.DeviceIoRequest.descriptor;
+
+	rq_for_each_segment(bv, io_request, iter)
+		total_buffer_length += bv->bv_len;
+
+	golden_request->sel.DeviceIoRequest.descriptor->length = total_buffer_length;
+	golden_request->sel.DeviceIoRequest.descriptor->data = kzalloc(total_buffer_length, GFP_USER);
+
+	if (golden_request->sel.DeviceIoRequest.descriptor->data == NULL)
+		goto err;
+
+	offset = 0;
+	rq_for_each_segment(bv, io_request, iter)
+	{
+		char * buffer = page_address(bv->bv_page) + bv->bv_offset;
+
+		if (direction == WRITE)
+			memcpy(golden_request->sel.DeviceIoRequest.descriptor->data + offset, buffer, bv->bv_len);
+		offset += bv->bv_len;
+	}
+
+	return 0;
+err:
+	if (golden_request->sel.DeviceIoRequest.descriptor != NULL)
+	{
+		if (golden_request->sel.DeviceIoRequest.descriptor->data != NULL)
+			kfree(golden_request->sel.DeviceIoRequest.descriptor->data);
+
+		kfree(golden_request->sel.DeviceIoRequest.descriptor);
+	}
+
+	return status;
 }
 
 static void sanitize_request(GoldenRequest* request)
