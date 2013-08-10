@@ -23,11 +23,13 @@
 #include <linux/timer.h>
 #include <linux/jiffies.h>
 
+#include <linux/semaphore.h>
+
 #ifndef __SFUSION_H__
 #define __SFUSION_H__
 
 #define DEVICE_NAME "sfusion"
-#define BUFFER_SIZE 4096
+#define BUFFER_SIZE 1000
 
 typedef struct device_list device_list;
 typedef struct rule_list rule_list;
