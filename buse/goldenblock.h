@@ -35,6 +35,9 @@ typedef struct GoldenBlock
 
 void golden_block_list_initialize(GoldenBlock* block);
 
+RequestNode* golden_block_pop_request(GoldenBlock* block_dev);
+void golden_block_add_request_to_usermode_pending_list(GoldenBlock* block_dev, RequestNode* request_node);
+
 int golden_block_create(char* name, int capacity, int minors, GoldenBlock** out);
 void golden_block_destroy(GoldenBlock* block);
 #define RB_SECTOR_SIZE 512

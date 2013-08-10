@@ -17,7 +17,7 @@ static const struct block_device_operations goldenblock_ops = {
        .owner = THIS_MODULE,
        .open = goldenblock_open,
        .release = goldenblock_release
-}
+};
 
 static int goldenblock_open(struct block_device* bdev, fmode_t mode)
 {
@@ -55,7 +55,7 @@ void goldenblock_request(struct request_queue* queue)
 		}
 	
 		request_node->req = req;
-		list_add(&(request_node->list), &(((GoldenBlock*)req->rq_disk->private_data)->request_list));
+		list_add(&(request_node->next), &(((GoldenBlock*)req->rq_disk->private_data)->request_list));
 	}
 }
 
@@ -147,9 +147,9 @@ RequestNode* golden_block_pop_request(GoldenBlock* block_dev)
 	return node;
 }
 
-static void golden_block_add_request_to_usermode_pending_list(GoldenBlock* block_dev, RequestNode* request_node)
+void golden_block_add_request_to_usermode_pending_list(GoldenBlock* block_dev, RequestNode* request_node)
 {
-	struct list_head iter;
+	struct list_head* iter;
 	int max_request_id = 1;
 
 	list_for_each(iter, &(block_dev->pending_for_usermode_request_list))

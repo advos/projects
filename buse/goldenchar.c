@@ -9,7 +9,7 @@ static int goldenchar_open(struct inode* ind, struct file* filep);
 static int goldenchar_release(struct inode* ind, struct file* filep);
 static long goldenchar_ioctl(struct file* filep, unsigned int num, unsigned long ptr);
 
-static int handle_request(struct filel* filep, GoldenRequest* request);
+static int handle_request(struct file* filep, void* original_usermode_request, GoldenRequest* request);
 static int setup_new_device(struct file* filep, GoldenRequest* request);
 static int remove_device(struct file* filep, GoldenRequest* request);
 
@@ -17,6 +17,7 @@ static GoldenBlock* search_for_block_device_by_fd(int fd, kuid_t uid, pid_t pid)
 static void golden_block_assign_fd(GoldenBlock* block, kuid_t uid, pid_t pid);
 
 static int get_io(GoldenRequest* request);
+static int generate_usermode_request_from_io_request(GoldenRequest* golden_request, struct request* io_request);
 
 static void sanitize_request(GoldenRequest* request);
 
@@ -55,7 +56,7 @@ static long goldenchar_ioctl(struct file* filep, unsigned int num, unsigned long
 	switch(num)
 	{
 		case GOLDENCHAR_IOCTL_REQUEST:
-			return handle_request(filep, request);
+			return handle_request(filep, (void __user *)ptr, request);
 		case GOLDENCHAR_IOCTL_DEBUG:
 			break;
 		default:
@@ -65,8 +66,9 @@ static long goldenchar_ioctl(struct file* filep, unsigned int num, unsigned long
 	return 0;
 }
 
-static int handle_request(struct file* filep, GoldenRequest* request)
+static int handle_request(struct file* filep, void* original_usermode_request, GoldenRequest* request)
 {
+	int err = 0;
 	sanitize_request(request);
 
 	switch(request->request_type)
@@ -79,7 +81,14 @@ static int handle_request(struct file* filep, GoldenRequest* request)
 			return remove_device(filep, request);
 		case GOLDENCHAR_DEVICE_REQUEST:
 			printk(KERN_ALERT "Golden Char: Checking for I/O Operation for current process!");
-			return get_io(request);
+			err = get_io(request);
+			if (err == 0)
+				copy_to_user(original_usermode_request, request, sizeof(*request));
+			return err;
+		case GOLDENCHAR_DEVICE_COMPLETE_REQUEST:
+			printk(KERN_ALERT "Golden Char: Complete request called!");
+
+			break;
 		default:
 			printk(KERN_ALERT "Golden Char: Unknown request type!");
 	}
@@ -110,34 +119,31 @@ static int get_io(GoldenRequest* request)
 	//Now fill out parts for usermode
 	request->sel.DeviceIoRequest.request_id = next_request->request_id;
 
-	return generate_usermode_request_from_request(golden_request, next_request);	
+	return generate_usermode_request_from_io_request(request, next_request->req);	
 }
 
-static int generate_usermode_request_from_request(GoldenRequest* golden_request, struct request* io_request)
+static int generate_usermode_request_from_io_request(GoldenRequest* golden_request, struct request* io_request)
 {
 	struct bio_vec *bv;
 	struct req_iterator iter;
-	char* buffer;
 	int direction = rq_data_dir(io_request);
 	unsigned int total_buffer_length = 0;
-	unsigned int offset = 0;
+	unsigned int offset = 0;
 	int status = -ENOMEM;
 
-	IoDescriptor* current_descriptor = NULL;
-	
 	golden_request->sel.DeviceIoRequest.direction = direction;
-	
 	golden_request->sel.DeviceIoRequest.descriptor = kzalloc(sizeof(IoDescriptor), GFP_USER);
 
 	if (golden_request->sel.DeviceIoRequest.descriptor == NULL)
 		goto err;
 
-	current_descriptor = golden_request->sel.DeviceIoRequest.descriptor;
-
 	rq_for_each_segment(bv, io_request, iter)
 		total_buffer_length += bv->bv_len;
 
 	golden_request->sel.DeviceIoRequest.descriptor->length = total_buffer_length;
+	if (direction == READ)
+		return 0;
+
 	golden_request->sel.DeviceIoRequest.descriptor->data = kzalloc(total_buffer_length, GFP_USER);
 
 	if (golden_request->sel.DeviceIoRequest.descriptor->data == NULL)
@@ -236,7 +242,7 @@ static GoldenBlock* search_for_block_device_by_fd(int fd, kuid_t uid, pid_t pid)
 	{
 		GoldenBlock* temp = list_entry(iter, GoldenBlock, list);
 
-		if ((temp->internal_fd == fd) && uid_eq(uid, temp->owner_uid) && (temp->owner_pid == pid)
+		if ((temp->internal_fd == fd) && uid_eq(uid, temp->owner_uid) && (temp->owner_pid == pid))
 		return temp;
 	}
 
