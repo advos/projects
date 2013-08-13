@@ -22,7 +22,7 @@ sema_init(&(_golden.golden_lock), 1);
 
 if (setup_goldenchar_device(&_golden, &_golden.gchar) < 0)
 {
-printk(KERN_ALERT "Golden Gate: Failed initializing Golden Char!");
+printk(KERN_ALERT "Golden Gate: Failed initializing Golden Char!\n");
 retval = -1;
 goto cleanup;
 }

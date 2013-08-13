@@ -3,7 +3,7 @@
 
 #define MAX_NAME 32
 
-#define GOLDENCHAR_STR "my_goldenchar"
+#define GOLDENCHAR_STR "goldenchar"
 #define DEVFS_GOLDENCHAR_PATH "/dev/" GOLDENCHAR_STR
 #define GOLDEN_DEV_CHAR_CLASS "GoldenGateClass2"
 

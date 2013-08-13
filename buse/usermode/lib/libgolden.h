@@ -18,7 +18,7 @@ typedef struct golden_operations
 
 int libgolden_init();
 
-int libgolden_create_device(char* name, int minors, int capacity, golden_operations* ops);
+int libgolden_register_device(char* name, int minors, int capacity, golden_operations* ops);
 
 
 #endif

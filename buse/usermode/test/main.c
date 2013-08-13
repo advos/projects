@@ -12,7 +12,7 @@ int main()
 		return -1;
 	}
 
-	fd = libgolden_create_device("MyDevice", 1, 8192, &ops);
+	fd = libgolden_register_device("MyDevice", 1, 8192, &ops);
 
 	printf("Got back fd: %d\n", fd);	
 

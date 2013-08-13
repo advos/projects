@@ -77,7 +77,9 @@ static int handle_request(struct file* filep, void* original_usermode_request, G
 	{
 		case GOLDENCHAR_REQUEST_NEW_DEVICE:
 			printk(KERN_ALERT "Golden Char: Asked to create a new device");
-			return setup_new_device(filep, request);
+			err = setup_new_device(filep, request);
+			copy_to_user(original_usermode_request, request, sizeof(*request));
+			return err;
 		case GOLDENCHAR_REQUEST_REMOVE_DEVICE:
 			printk(KERN_ALERT "Golden Char: Asked to remove device");
 			return remove_device(filep, request);
@@ -252,6 +254,8 @@ static void sanitize_request(GoldenRequest* request)
 	{
 		case GOLDENCHAR_REQUEST_NEW_DEVICE:
 			string_truncate(request->sel.NewDeviceRequest.device_name, sizeof(request->sel.NewDeviceRequest.device_name));
+			string_replace(request->sel.NewDeviceRequest.device_name, sizeof(request->sel.NewDeviceRequest.device_name), '/', '_');
+			string_replace(request->sel.NewDeviceRequest.device_name, sizeof(request->sel.NewDeviceRequest.device_name), '.', '_'); 
 			break;
 		default:
 			break;
@@ -405,6 +409,8 @@ int setup_goldenchar_device(GoldenGate* golden, GoldenChar* gchar)
 		goto cleanup;
 	}
 
+	my_chmod(DEVFS_GOLDENCHAR_PATH, 0777);	
+
 cleanup:
 	if (retval < 0)
 		free_goldenchar_device(gchar);
@@ -419,6 +425,6 @@ void free_goldenchar_device(GoldenChar* gchar)
 		class_destroy(gchar->dev_class);
 		gchar->dev_class = NULL;
 	}
-
+ 
 	unregister_chrdev_region(gchar->dev_no, 1);
-}
+} 

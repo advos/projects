@@ -1,19 +1,37 @@
 #include "libgolden.h"
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <string.h>
 
 int goldenchar_fd = 0;
 
+typedef struct device_list
+{
+	int fd;
+	golden_operations ops;
+	struct device_list* next;	
+} device_list;
+
+typedef struct internal_context
+{
+	int goldenchar_fd;
+	device_list* device_list;
+} internal_context;
+
+internal_context _context = {0};
+
 int libgolden_init()
 {
-	goldenchar_fd = open(DEVFS_GOLDENCHAR_PATH);
+	_context.goldenchar_fd = open(DEVFS_GOLDENCHAR_PATH, O_RDWR);
 
-	if (goldenchar_fd <= 0)
+	if (_context.goldenchar_fd == -1)
 		return -1;
 
 	return 0;
 }
 
-int libgolden_create_device(char* name, int minors, int capacity, golden_operations* ops)
+int libgolden_register_device(char* name, int minors, int capacity, golden_operations* ops)
 {
 	GoldenRequest request = {0};
 
