@@ -10,9 +10,6 @@
 #include "common.h"
 #include "goldenblock.h"
 
-#define GOLDENCHAR_STR "my_goldenchar"
-#define DEVFS_GOLDENCHAR_PATH "/dev/" GOLDENCHAR_STR
-#define GOLDEN_DEV_CHAR_CLASS "GoldenGateClass2"
 
 typedef struct GoldenGate GoldenGate;
 

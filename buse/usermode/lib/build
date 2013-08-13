@@ -1,5 +1,0 @@
-gcc -I/home/arik/Project/git/projects/buse -Wall -c goldengate_lib.c
-rm -r libgoldengate.a
-ar -cvq libgoldengate.a goldengate_lib.o
-ar -t libgoldengate.a
-
