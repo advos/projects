@@ -40,5 +40,7 @@ void golden_block_add_request_to_usermode_pending_list(GoldenBlock* block_dev, R
 
 int golden_block_create(char* name, int capacity, int minors, GoldenBlock** out);
 void golden_block_destroy(GoldenBlock* block);
+RequestNode* golden_block_search_for_pending_request(GoldenBlock* block_dev, int request_id);
+void golden_block_remove_request_from_usermode_pending_list(GoldenBlock* block_dev, RequestNode* request_node);
 #define RB_SECTOR_SIZE 512
 #endif

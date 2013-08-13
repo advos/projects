@@ -27,7 +27,6 @@ typedef enum BlockDeviceOperation
 
 typedef struct IoDescriptor
 {
-	int start_sector;
 	int length;
 	char* data;
 } IoDescriptor;
@@ -56,7 +55,7 @@ union sel
 		int fd;
 		int request_id;
 		int direction;
-		IoDescriptor* descriptor;
+		IoDescriptor descriptor;
 	} DeviceIoRequest;
 
 	//This struct is filled out by the usermode app to represent a completed I/O Operation
@@ -65,7 +64,7 @@ union sel
 	{
 		int fd;
 		int request_id;
-		IoDescriptor* descriptor;
+		IoDescriptor descriptor;
 	} DeviceIoCompleteRequest;
 	} sel;
 } GoldenRequest;

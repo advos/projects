@@ -19,6 +19,8 @@ static void golden_block_assign_fd(GoldenBlock* block, kuid_t uid, pid_t pid);
 static int get_io(GoldenRequest* request);
 static int generate_usermode_request_from_io_request(GoldenRequest* golden_request, struct request* io_request);
 
+static int complete_request(GoldenRequest* request);
+
 static void sanitize_request(GoldenRequest* request);
 
 static const struct file_operations goldenchar_fops = {
@@ -87,8 +89,7 @@ static int handle_request(struct file* filep, void* original_usermode_request, G
 			return err;
 		case GOLDENCHAR_DEVICE_COMPLETE_REQUEST:
 			printk(KERN_ALERT "Golden Char: Complete request called!");
-
-			break;
+			return complete_request(request);
 		default:
 			printk(KERN_ALERT "Golden Char: Unknown request type!");
 	}
@@ -132,21 +133,18 @@ static int generate_usermode_request_from_io_request(GoldenRequest* golden_reque
 	int status = -ENOMEM;
 
 	golden_request->sel.DeviceIoRequest.direction = direction;
-	golden_request->sel.DeviceIoRequest.descriptor = kzalloc(sizeof(IoDescriptor), GFP_USER);
-
-	if (golden_request->sel.DeviceIoRequest.descriptor == NULL)
-		goto err;
+	memset(&golden_request->sel.DeviceIoRequest.descriptor, 0, sizeof(IoDescriptor));
 
 	rq_for_each_segment(bv, io_request, iter)
 		total_buffer_length += bv->bv_len;
 
-	golden_request->sel.DeviceIoRequest.descriptor->length = total_buffer_length;
+	golden_request->sel.DeviceIoRequest.descriptor.length = total_buffer_length;
 	if (direction == READ)
 		return 0;
 
-	golden_request->sel.DeviceIoRequest.descriptor->data = kzalloc(total_buffer_length, GFP_USER);
+	golden_request->sel.DeviceIoRequest.descriptor.data = kzalloc(total_buffer_length, GFP_USER);
 
-	if (golden_request->sel.DeviceIoRequest.descriptor->data == NULL)
+	if (golden_request->sel.DeviceIoRequest.descriptor.data == NULL)
 		goto err;
 
 	offset = 0;
@@ -155,21 +153,97 @@ static int generate_usermode_request_from_io_request(GoldenRequest* golden_reque
 		char * buffer = page_address(bv->bv_page) + bv->bv_offset;
 
 		if (direction == WRITE)
-			memcpy(golden_request->sel.DeviceIoRequest.descriptor->data + offset, buffer, bv->bv_len);
+			memcpy(golden_request->sel.DeviceIoRequest.descriptor.data + offset, buffer, bv->bv_len);
 		offset += bv->bv_len;
 	}
 
 	return 0;
 err:
-	if (golden_request->sel.DeviceIoRequest.descriptor != NULL)
-	{
-		if (golden_request->sel.DeviceIoRequest.descriptor->data != NULL)
-			kfree(golden_request->sel.DeviceIoRequest.descriptor->data);
-
-		kfree(golden_request->sel.DeviceIoRequest.descriptor);
-	}
+	if (golden_request->sel.DeviceIoRequest.descriptor.data != NULL)
+		kfree(golden_request->sel.DeviceIoRequest.descriptor.data);
 
 	return status;
+}
+
+static int complete_request_internal(RequestNode* internal_request, GoldenRequest* request)
+{
+	int err = -1;
+	int direction = rq_data_dir(internal_request->req);
+	char* data_buffer = NULL;
+	struct bio_vec* bv= NULL;
+	struct req_iterator iter;
+	unsigned int total_buffer_length = 0;
+	unsigned int offset = 0;
+	
+	//Some validity checking
+
+	rq_for_each_segment(bv, internal_request->req, iter)
+		total_buffer_length += bv->bv_len;
+
+
+	if (total_buffer_length < request->sel.DeviceIoCompleteRequest.descriptor.length)
+		goto cleanup;
+
+	if (direction == WRITE)
+	{
+		err = 0; //For now we do nothing and report success on any write
+		goto cleanup;
+	}
+
+	data_buffer = kmalloc(request->sel.DeviceIoCompleteRequest.descriptor.length, GFP_KERNEL);
+
+	if (data_buffer == NULL)
+		goto cleanup;
+
+	if (copy_from_user(data_buffer, request->sel.DeviceIoCompleteRequest.descriptor.data, request->sel.DeviceIoCompleteRequest.descriptor.length) != 0)
+		goto cleanup;
+
+	offset = 0;
+	rq_for_each_segment(bv, internal_request->req, iter)
+	{
+		char * buffer = page_address(bv->bv_page) + bv->bv_offset;
+
+		if (direction == READ)
+			memcpy(buffer, request->sel.DeviceIoRequest.descriptor.data + offset, bv->bv_len);
+		offset += bv->bv_len;
+	}
+
+cleanup:
+	if (data_buffer != NULL)
+		kfree(data_buffer);
+
+	__blk_end_request_all(internal_request->req, err);
+
+	return err;
+}
+
+static int complete_request(GoldenRequest* request)
+{
+	//search for the request to complete
+	int fd = request->sel.DeviceIoCompleteRequest.fd;
+	int request_id = request->sel.DeviceIoCompleteRequest.request_id;
+	struct RequestNode* next_request = NULL;
+
+	GoldenBlock* block_dev = search_for_block_device_by_fd(fd, current_uid(), task_pid_nr(current));
+
+	if (block_dev == NULL)
+		return -1;
+
+	//We need mutex here or pop the pending request
+	
+	next_request = golden_block_search_for_pending_request(block_dev, request_id);
+
+	if (next_request == NULL)
+		return -1;
+
+	complete_request_internal(next_request, request);
+	
+	golden_block_remove_request_from_usermode_pending_list(block_dev, next_request);
+	
+
+	// Critical section - END
+
+	return 0;
 }
 
 static void sanitize_request(GoldenRequest* request)

@@ -164,3 +164,23 @@ void golden_block_add_request_to_usermode_pending_list(GoldenBlock* block_dev, R
 
 	list_add(&(request_node->next), &(block_dev->pending_for_usermode_request_list));
 }
+
+RequestNode* golden_block_search_for_pending_request(GoldenBlock* block_dev, int request_id)
+{
+	struct list_head* iter;
+
+	list_for_each(iter, &(block_dev->pending_for_usermode_request_list))
+	{
+		RequestNode* node = list_entry(iter, RequestNode, next);
+
+		if (node->request_id == request_id)
+			return node;
+	}
+
+	return NULL;
+}
+
+void golden_block_remove_request_from_usermode_pending_list(GoldenBlock* block_dev, RequestNode* request_node)
+{
+	list_del(&request_node->next);
+}
