@@ -134,7 +134,11 @@ static int generate_usermode_request_from_io_request(GoldenRequest* golden_reque
 	unsigned int offset = 0;
 	int status = -ENOMEM;
 
-	golden_request->sel.DeviceIoRequest.direction = direction;
+	if (direction == READ)
+		golden_request->sel.DeviceIoRequest.operation = BLOCK_DEVICE_READ;
+	else
+		golden_request->sel.DeviceIoRequest.operation = BLOCK_DEVICE_WRITE;
+
 	memset(&golden_request->sel.DeviceIoRequest.descriptor, 0, sizeof(IoDescriptor));
 
 	rq_for_each_segment(bv, io_request, iter)
@@ -183,7 +187,7 @@ static int complete_request_internal(RequestNode* internal_request, GoldenReques
 		total_buffer_length += bv->bv_len;
 
 
-	if (total_buffer_length < request->sel.DeviceIoCompleteRequest.descriptor.length)
+	if (total_buffer_length < request->sel.DeviceIoRequest.descriptor.length)
 		goto cleanup;
 
 	if (direction == WRITE)
@@ -192,12 +196,12 @@ static int complete_request_internal(RequestNode* internal_request, GoldenReques
 		goto cleanup;
 	}
 
-	data_buffer = kmalloc(request->sel.DeviceIoCompleteRequest.descriptor.length, GFP_KERNEL);
+	data_buffer = kmalloc(request->sel.DeviceIoRequest.descriptor.length, GFP_KERNEL);
 
 	if (data_buffer == NULL)
 		goto cleanup;
 
-	if (copy_from_user(data_buffer, request->sel.DeviceIoCompleteRequest.descriptor.data, request->sel.DeviceIoCompleteRequest.descriptor.length) != 0)
+	if (copy_from_user(data_buffer, request->sel.DeviceIoRequest.descriptor.data, request->sel.DeviceIoRequest.descriptor.length) != 0)
 		goto cleanup;
 
 	offset = 0;
@@ -222,8 +226,8 @@ cleanup:
 static int complete_request(GoldenRequest* request)
 {
 	//search for the request to complete
-	int fd = request->sel.DeviceIoCompleteRequest.fd;
-	int request_id = request->sel.DeviceIoCompleteRequest.request_id;
+	int fd = request->sel.DeviceIoRequest.fd;
+	int request_id = request->sel.DeviceIoRequest.request_id;
 	struct RequestNode* next_request = NULL;
 
 	GoldenBlock* block_dev = search_for_block_device_by_fd(fd, current_uid(), task_pid_nr(current));

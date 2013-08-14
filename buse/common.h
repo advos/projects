@@ -23,8 +23,10 @@ GOLDENCHAR_DEVICE_COMPLETE_REQUEST,
 
 typedef enum BlockDeviceOperation
 {
+	BLOCK_DEVICE_OPEN,
 	BLOCK_DEVICE_READ,
 	BLOCK_DEVICE_WRITE,
+	BLOCK_DEVICE_CLOSE,
 } BlockDeviceOperation;
 
 typedef struct IoDescriptor
@@ -56,18 +58,10 @@ union sel
 	{
 		int fd;
 		int request_id;
-		int direction;
+		int operation;
 		IoDescriptor descriptor;
 	} DeviceIoRequest;
 
-	//This struct is filled out by the usermode app to represent a completed I/O Operation
-	//Operations like writing need to pass the completed data to the driver, hence the operation_buffer parameter.
-	struct DeviceIoCompleteRequest
-	{
-		int fd;
-		int request_id;
-		IoDescriptor descriptor;
-	} DeviceIoCompleteRequest;
 	} sel;
 } GoldenRequest;
 
