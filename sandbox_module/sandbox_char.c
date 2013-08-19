@@ -1,48 +1,9 @@
-#include "sandbox_algorithm.h"
-#include <linux/init.h>
-#include <linux/module.h>
-
-#include <linux/fs.h>
-#include <linux/cdev.h>
-
-#include <asm/uaccess.h> // copy_from_user()
-#include <asm/bitops.h> //bitmap
-
-#include <linux/kernel.h> /* printk() */
-#include <linux/slab.h> /* kmalloc() */
-#include <linux/fs.h> /* everything... */
-#include <linux/errno.h> /* error codes */
-#include <linux/types.h> /* size_t */
-#include <linux/fcntl.h> /* O_ACCMODE */
-#include <linux/list.h> /* O_ACCMODE */
-
+#include "sandbox_char.h"
 
 
 MODULE_LICENSE("Dual BSD/GPL");
 
 
-struct sandbox_class * get_sandbox(unsigned long sandbox_id);
-void sandbox_set_jail(struct sandbox_class * sandbox, const char * jail_dir);
-void sandbox_set_strip_files(struct sandbox_class * sandbox, bool strip_files);
-void init_sandbox(struct sandbox_class * sandbox);
-void _clear_pointer(void * ptr);
-void sandbox_set_syscall_bit(struct sandbox_class * sandbox, unsigned int syscall_num, bool bitval);
-int find_file(struct sandbox_class * sandbox, const char * filename);
-int find_ip(struct sandbox_class * sandbox, const char * ip);
-
-struct sandbox_struct {
-  int opens;
-  int releases;
-  int writes;
-  int reads;
-  char *buff;
-	char* answer; //output buff
-  int buffsize;
-  int size;
-  struct semaphore sem;
-  dev_t dev;
-  struct cdev my_cdev;
-};
 static char* FAIL_STRING = "The requested sandbox query have been failed";
 static char* SUCCESS_STRING = "The requested sandbox query have been succeed";
 static struct sandbox_struct *mydev = NULL;
@@ -52,40 +13,39 @@ static struct sandbox_struct *mydev = NULL;
 */
 static int sandbox_open(struct inode *inode, struct file *filp)
 {
-  struct sandbox_struct *mydev;
-  
-  mydev = container_of(inode->i_cdev, struct sandbox_struct, my_cdev);
+	struct sandbox_struct *mydev;  	
+	mydev = container_of(inode->i_cdev, struct sandbox_struct, my_cdev);
 
 	//update the opens
 	down_interruptible(&mydev->sem);
 
-  filp->private_data = mydev;    
-  printk(KERN_ALERT "sandbox_open called %d times\n", ++mydev->opens);
+  	filp->private_data = mydev;    
+  	printk(KERN_ALERT "sandbox_open called %d times\n", ++mydev->opens);
 
 	up(&mydev->sem);
 
-  return 0;
+	return 0;
 }
 
 static ssize_t sandbox_read(struct file *filp, char __user *buff, size_t count, loff_t *offp)
 {
-  int res, wb;
+	int res, wb;
 
-  struct sandbox_struct *mydev = filp->private_data;
+	struct sandbox_struct *mydev = filp->private_data;
 	down_interruptible(&mydev->sem);
  
-  wb = (count < mydev->size - *offp) ? count : mydev->size - *offp;
+	wb = (count < mydev->size - *offp) ? count : mydev->size - *offp;
   
-  res = copy_to_user(buff, mydev->buff+*offp, wb);
-  if (res == 0)
-    printk(KERN_ALERT "sandbox_read called %d timed\n", ++mydev->reads);
+	res = copy_to_user(buff, mydev->buff+*offp, wb);
+	if (res == 0)
+	    printk(KERN_ALERT "sandbox_read called %d timed\n", ++mydev->reads);
 
-  *offp += wb - res;
-  res = wb - res;
+  	*offp += wb - res;
+  	res = wb - res;
 
 	up(&mydev->sem);
   
-  return res;
+  	return res;
 }
 /**
 * clear ip list in case of switch of networking mode
@@ -327,9 +287,6 @@ static void request_processing(struct file *filp)
 			printk("sandbox number %d is out of the range",sandbox_num);
 			goto failure;
 		}
-		printk("%d\n",(num_tokens == 4));
-		printk("%d\n",!strcmp(tokens[2],"strip"));
-		printk("%d\n",!strcmp(tokens[3],"files"));
 		//TODO: macro to check the path, path with whitespaces
 		if(num_tokens >= 5 && !strcmp(tokens[2],"jail") && !strcmp(tokens[3],"in"))
 		{
