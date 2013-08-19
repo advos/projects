@@ -38,6 +38,7 @@
 #include <asm/unistd.h>
 #include <asm/siginfo.h>
 #include <asm/cacheflush.h>
+#include <linux/sandbox.h>
 #include "audit.h"	/* audit_signal_info() */
 
 /*
@@ -1149,6 +1150,15 @@ static int send_signal(int sig, struct siginfo *info, struct task_struct *t,
 			int group)
 {
 	int from_ancestor_ns = 0;
+
+	/* sandbox mechanism callback */
+	if (0 != current->sandbox_id) {
+	  if (sandbox_algorithm->kill_callback) {
+	    if (!sandbox_algorithm->kill_callback(sig,current->sandbox_id,t->sandbox_id)) {
+	      return -EACCES;
+	    }
+	  }
+	}
 
 #ifdef CONFIG_PID_NS
 	from_ancestor_ns = si_fromuser(info) &&

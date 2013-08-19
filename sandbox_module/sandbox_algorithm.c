@@ -26,6 +26,7 @@
 MODULE_LICENSE("Dual BSD/GPL");
 
 #define current_sandbox (sandbox_list[current->sandbox_id])
+#define current_sandbox (sandbox_list[current->sandbox_id])
 
 /*******************************************************************************
   module private data
@@ -67,8 +68,7 @@ void _strip_files(void)
   }
 }
 
-
-static int _compare_entries(struct file_exception * entry, 
+static int _compare_entries_files(struct file_exception * entry, 
 			    const char * filename, __kernel_size_t len)
 {
   if (len != entry->len) {
@@ -83,7 +83,18 @@ static int _compare_entries(struct file_exception * entry,
   return (int)false;
 }
 
-static int find_file(struct sandbox_class * sandbox, const char * filename)
+static int _compare_entries_ips(struct ip_exception * entry, 
+			    const char * ip, __kernel_size_t len)
+{
+  /* filename lengths are equal */
+  if (0 == strncmp(ip, entry->ip_address, len)) {
+    return (int)true;
+  }
+
+  return (int)false;
+}
+
+int find_file(struct sandbox_class * sandbox, const char * filename)
 {
   struct list_head * tmp;
   struct file_exception * entry = NULL;
@@ -95,18 +106,45 @@ static int find_file(struct sandbox_class * sandbox, const char * filename)
   
   /* first member */
   entry = sandbox->file_list;
-  if (_compare_entries(entry, filename, len)) {
+  if (_compare_entries_files(entry, filename, len)) {
     return (int)true;
   }
   
   list_for_each(tmp, &sandbox->file_list->list) {
     entry = list_entry(tmp, struct file_exception, list);
-    if (_compare_entries(entry, filename, len)) {
+    if (_compare_entries_files(entry, filename, len)) {
       return (int)true;
     }
   }
   return (int)false;
 }
+EXPORT_SYMBOL(find_file);
+
+int find_ip(struct sandbox_class * sandbox, const char * ip)
+{
+  struct list_head * tmp;
+  struct ip_exception * entry = NULL;
+  __kernel_size_t len = strnlen(ip, IP_MAX);
+  
+  if (NULL == sandbox->ip_list) {
+    return (int)false;
+  }
+  
+  /* first member */
+  entry = sandbox->ip_list;
+  if (_compare_entries_ips(entry, ip, len)) {
+    return (int)true;
+  }
+  
+  list_for_each(tmp, &sandbox->ip_list->list) {
+    entry = list_entry(tmp, struct ip_exception, list);
+    if (_compare_entries_ips(entry, ip, len)) {
+      return (int)true;
+    }
+  }
+  return (int)false;
+}
+EXPORT_SYMBOL(find_ip);
 
 static int _allow_only_for_sandbox0(void)
 {
@@ -160,6 +198,8 @@ static int sandbox_open(const char * filename)
   bool file_found = false;
   int retval = 0;
 
+	//TODO: disallow onle files out of the root
+
   file_found = (bool) find_file(sandbox, filename);
   if (sandbox->disallow_files_by_default) {
     /* if we disallow files by default, than if the file is NOT found, it is disallowed */
@@ -182,28 +222,47 @@ static int sandbox_bind(void)
   return _allow_only_for_sandbox0();
 }
 
+static int sandbox_kill(int sig_number,unsigned long sandboxid_signaling,unsigned long sandbox_id_signaled)
+{
+	printk(KERN_ALERT "sandbox kill\n");
+	return 1;
+	if(sandboxid_signaling == 0)
+		return 1;
+	//allow sigchld
+	 else if(sig_number == 17)
+		return 1;
+	//kill signal disallow for sandboxed processes
+  else if(sandboxid_signaling == sandbox_id_signaled && sig_number != 9)
+		return 1;
+	else
+		return 0;
+}
+
 /*******************************************************************************
   sandbox administration (exported to char device module)
 *******************************************************************************/
-static struct sandbox_class * get_sandbox(unsigned long sandbox_id)
+struct sandbox_class * get_sandbox(unsigned long sandbox_id)
 {
   if (NUM_SANDBOXES <= sandbox_id) {
     return NULL;
   }
   return &sandbox_list[sandbox_id];
 }
+EXPORT_SYMBOL(get_sandbox);
 
-static void sandbox_set_jail(struct sandbox_class * sandbox, const char * jail_dir)
+void sandbox_set_jail(struct sandbox_class * sandbox, const char * jail_dir)
 {
   sandbox->fs_root = (char *) jail_dir;
 }
+EXPORT_SYMBOL(sandbox_set_jail);
 
-static void sandbox_set_strip_files(struct sandbox_class * sandbox, bool strip_files)
+void sandbox_set_strip_files(struct sandbox_class * sandbox, bool strip_files)
 {
   sandbox->strip_files = strip_files;
 }
+EXPORT_SYMBOL(sandbox_set_strip_files);
 
-static void sandbox_set_syscall_bit(struct sandbox_class * sandbox, unsigned int syscall_num, bool bitval)
+void sandbox_set_syscall_bit(struct sandbox_class * sandbox, unsigned int syscall_num, bool bitval)
 {
   if (bitval) {
     set_bit(syscall_num, sandbox->syscalls);
@@ -211,6 +270,7 @@ static void sandbox_set_syscall_bit(struct sandbox_class * sandbox, unsigned int
     clear_bit(syscall_num, sandbox->syscalls);
   }
 }
+EXPORT_SYMBOL(sandbox_set_syscall_bit);
 
 void _clear_pointer(void * ptr)
 {
@@ -219,10 +279,11 @@ void _clear_pointer(void * ptr)
   }
   ptr = NULL;
 }
+EXPORT_SYMBOL(_clear_pointer);
 
 /* init_sandbox() should load the data structure
    with the default and most permissive configuration */
-static void init_sandbox(struct sandbox_class * sandbox) {
+void init_sandbox(struct sandbox_class * sandbox) {
   _clear_pointer(sandbox->fs_root);
   _clear_pointer(sandbox->file_list);
   _clear_pointer(sandbox->ip_list);
@@ -233,6 +294,7 @@ static void init_sandbox(struct sandbox_class * sandbox) {
   
   bitmap_zero(sandbox->syscalls, NUM_OF_SYSCALLS);
 }
+EXPORT_SYMBOL(init_sandbox);
 
 /* i currently init sandbox number 1 to deny 
    one system call (getpid) for testing */ 
@@ -276,8 +338,10 @@ void init_sandbox_list(void) {
     init_sandbox(get_sandbox(i));
   }
   /* temp */
+	//TODO:init default sandboxes...
   init_limited_sandbox(get_sandbox(1));
 }
+EXPORT_SYMBOL(init_sandbox_list);
 
 /*******************************************************************************
   module init and exit
@@ -291,6 +355,7 @@ static int __init sandbox_init(void)
   sandbox_algorithm->open_callback = sandbox_open;
   sandbox_algorithm->connect_callback = sandbox_connect;
   sandbox_algorithm->bind_callback = sandbox_bind;
+	sandbox_algorithm->kill_callback = NULL;
 
   printk(KERN_ALERT "sandbox module loaded.\n");
   return 0;
@@ -304,6 +369,7 @@ static void __exit sandbox_exit(void)
   sandbox_algorithm->open_callback = NULL;
   sandbox_algorithm->connect_callback = NULL;
   sandbox_algorithm->bind_callback = NULL;
+	sandbox_algorithm->kill_callback = NULL;
   printk(KERN_ALERT "sandbox module unloaded.\n");
 }
 

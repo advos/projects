@@ -7,6 +7,8 @@
 
 /* didn't find from where to import NR_SYSCALLS */
 #define NUM_OF_SYSCALLS 351
+#define IP_MAX 25
+#define FILE_MAX 255
 
 struct file_exception {
   char * filename;

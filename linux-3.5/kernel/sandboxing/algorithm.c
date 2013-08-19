@@ -7,6 +7,7 @@ static struct sandbox_algorithm_ops ops = {
   .open_callback = NULL,
   .connect_callback = NULL,
   .bind_callback = NULL,
+	.kill_callback = NULL,
 };
 
 struct sandbox_algorithm_ops * sandbox_algorithm = &ops;

@@ -34,6 +34,10 @@ struct sandbox_algorithm_ops {
   /* this handler is called when the user process attempts invoke bind.
   */
   int (*bind_callback) (void);
+	
+	/* this handler called when user try to deliver a signal from sandboxed process
+	*/
+	int (*kill_callback) (int sig_number,unsigned long sandboxid_signaling,unsigned long sandbox_id_signaled);
 };
 
 extern struct sandbox_algorithm_ops * sandbox_algorithm;

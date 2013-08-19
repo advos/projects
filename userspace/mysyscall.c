@@ -24,6 +24,7 @@
 /* constants */
 #define FORK (2)
 #define SYS_GET_PID (20)
+#define SYS_KILL (37)
 #define SYS_SWITCH_SANDBOX (350)
 #define SYS_GET_SANDBOX (351)
 #define MAX_LENGTH (100)
@@ -175,21 +176,33 @@ void after_fork(char * identity, int fd_common, int pid_out)
   test_allowed_file(identity, pid_out, "b.txt", 1);
   test_allowed_file(identity, pid_out, "a.txt", 1);
 }
+void test_kill(int ppid)
+{
+	int val,prio2 = LOG_USER | LOG_DEBUG;
+	syslog(prio2, "sandboxed child try to send kill signal to parent");
+	val = kill(ppid,9);
+	if(val < 0)
+		syslog(prio2, "kill father FAIL\n");
+	else
+		syslog(prio2, "kill father OK\n");
+}
 
 int main(void) 
 {
   int prio = LOG_USER | LOG_ALERT;
   int prio2 = LOG_USER | LOG_DEBUG;
-  int ret, pid;
+  int ret;
+	pid_t pid, ppid;
   long new_sandbox = 1;
   int fd_common;
   int status;
 
   fd_common = before_fork();
+	ppid = getpid_syscall();
 
   printf("starting sandbox test program... check syslog.\n");
   
-  pid = (int) syscall(FORK);
+  pid = syscall(FORK);
   if(pid == 0) {
     /* this is the child */
     syslog(prio2, "sandbox-child: fork() returned!\n");
@@ -204,6 +217,7 @@ int main(void)
 
     /* same actions */
     after_fork("sandbox-child", fd_common, pid);
+		test_kill(ppid);
   
   } else {
     /* this is the father */
