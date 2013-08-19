@@ -1,0 +1,12 @@
+init sandbox <i>
+sandbox <i> jail in <path>
+sandbox <i> strip files
+sandbox <i> set file mode <disallow/allow>
+sandbox <i> allow file <path>
+sandbox <i> disallow file <path>
+sandbox <i> set networking mode <disallow/allow>
+sandbox <i> allow ip <ipaddress>
+sandbox <i> disallow ip <ipaddress>
+sandbox <i> allow syscall <syscall_num>
+sandbox <i> disallow syscall <syscall_num>
+sandbox <i> list rules
