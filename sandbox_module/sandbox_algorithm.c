@@ -224,7 +224,7 @@ static int sandbox_bind(void)
   return _allow_only_for_sandbox0();
 }
 
-/*static int sandbox_kill(int sig_number,unsigned long sandboxid_signaling,unsigned long sandbox_id_signaled)
+static int sandbox_kill(int sig_number,unsigned long sandboxid_signaling,unsigned long sandbox_id_signaled)
 {
 	printk(KERN_ALERT "sandbox kill\n");
 	return 1;
@@ -238,7 +238,7 @@ static int sandbox_bind(void)
 		return 1;
 	else
 		return 0;
-}*/
+}
 
 /*******************************************************************************
   sandbox administration (exported to char device module)
@@ -357,6 +357,7 @@ static int __init sandbox_init(void)
   sandbox_algorithm->open_callback = sandbox_open;
   sandbox_algorithm->connect_callback = sandbox_connect;
   sandbox_algorithm->bind_callback = sandbox_bind;
+	sandbox_algorithm->kill_callback = sandbox_kill;
 
   printk(KERN_ALERT "sandbox module loaded.\n");
   return 0;
@@ -370,6 +371,7 @@ static void __exit sandbox_exit(void)
   sandbox_algorithm->open_callback = NULL;
   sandbox_algorithm->connect_callback = NULL;
   sandbox_algorithm->bind_callback = NULL;
+	sandbox_algorithm->kill_callback = NULL;
   printk(KERN_ALERT "sandbox module unloaded.\n");
 }
 
