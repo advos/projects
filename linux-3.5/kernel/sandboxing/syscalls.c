@@ -31,7 +31,6 @@ SYSCALL_DEFINE1(switch_sandbox, unsigned long, sandbox_id)
     ret = sandbox_algorithm->enter_callback(sandbox_id);
   }
   
-  printk(KERN_ALERT "switch_sandbox() end with %d.\n", ret);
   return ret;
 }
 
