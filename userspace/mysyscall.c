@@ -7,6 +7,7 @@
 
 /* getpid */
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 /* for logging */
@@ -27,6 +28,7 @@
 #define SYS_SWITCH_SANDBOX (350)
 #define SYS_GET_SANDBOX (351)
 #define MAX_LENGTH (100)
+#define WD_SIZE (1024)
 
 int getpid_syscall(void) {
   return (int) syscall(SYS_GET_PID);
@@ -156,8 +158,18 @@ void test_allowed_file(char * identity, int pid_out, const char * filename, int 
   }
 }
 
+void check_wd(char * identity)
+{
+  int prio = LOG_USER | LOG_ALERT;
+  char working_dir[WD_SIZE];
+
+  getcwd(working_dir, WD_SIZE);
+  syslog(prio, "%s: my working dir is [%s]\n", identity, working_dir);
+}
+
 void after_fork(char * identity, int fd_common, int pid_out)
 {
+  check_wd(identity);
   test_syscall_blocking(identity, pid_out);
   test_file_stripping(identity, fd_common, pid_out);
   test_allowed_file(identity, pid_out, "existing.txt", 0);
@@ -183,6 +195,7 @@ int main(void)
 	pid_t pid, ppid;
   long new_sandbox = 1;
   int fd_common;
+  int status;
 
   fd_common = before_fork();
 	ppid = getpid_syscall();
@@ -196,6 +209,7 @@ int main(void)
     
     /* switches sandbox */
     ret = (int) syscall(SYS_SWITCH_SANDBOX, new_sandbox);
+    printf("sandbox-child: switch_sandbox() ret: %d\n", ret);
     syslog(prio2, "sandbox-child: switch_sandbox() ret: %d\n", ret);
 
     new_sandbox = (long) syscall(SYS_GET_SANDBOX);
@@ -209,6 +223,8 @@ int main(void)
     /* this is the father */
     syslog(prio, "sandbox-father: (pid of child is %d)\n", pid);
     
+    waitpid(pid, &status, 0);
+    printf("wait returned status (%d).\n", status);
     /* same actions */
     after_fork("sandbox-father", fd_common, pid);
   }
